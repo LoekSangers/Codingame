@@ -297,31 +297,7 @@ impl Game {
         }
     }
 
-    pub fn make_move(&self, m: Move) -> Result<Game, MoveError> {
-        let mut out = self.clone();
-        out.inplace_move(m).map(|_| out)
-    }
-
     pub fn inplace_move(&mut self, m: Move) -> Result<(), MoveError> {
-        if m.global() >= 9 || m.local() >= 9 {
-            return Err(MoveError::OutOfBounds);
-        }
-        match self.game_state {
-            GameState::InPlay => (),
-            _ => return Err(MoveError::GameOver),
-        }
-        if !self.global_states.in_play(m.global()) {
-            return Err(MoveError::WonBoard);
-        }
-        if let Some(b) = self.next_board {
-            if b != m.global() as u8 {
-                return Err(MoveError::WrongBoard);
-            }
-        }
-        if self.local_boards.at(m.global(), m.local()) != CellState::Empty {
-            return Err(MoveError::NotEmpty);
-        }
-
         self.local_boards.set(m.global(), m.local(), self.next_player);
         
         let board_state = self.local_boards.check_winner(m.global(), self.next_player);
