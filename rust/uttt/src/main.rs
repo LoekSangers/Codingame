@@ -1,6 +1,71 @@
-use std::io;
-
+use rand::prelude::IteratorRandom;
+use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::vec::Vec;
+use std::{io, time};
+
+#[derive(PartialEq)]
+struct NonNan(f32);
+
+impl NonNan {
+    fn new(val: f32) -> Option<NonNan> {
+        if val.is_nan() {
+            None
+        } else {
+            Some(NonNan(val))
+        }
+    }
+}
+
+impl Eq for NonNan {}
+
+impl PartialOrd for NonNan {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
+impl Ord for NonNan {
+    fn cmp(&self, other: &NonNan) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+
+    fn max(self, other: Self) -> Self
+    where
+        Self: Sized,
+    {
+        if self > other {
+            self
+        } else {
+            other
+        }
+    }
+
+    fn min(self, other: Self) -> Self
+    where
+        Self: Sized,
+    {
+        if self < other {
+            self
+        } else {
+            other
+        }
+    }
+
+    fn clamp(self, min: Self, max: Self) -> Self
+    where
+        Self: Sized,
+    {
+        assert!(min <= max);
+        if self < min {
+            min
+        } else if self > max {
+            max
+        } else {
+            self
+        }
+    }
+}
 
 macro_rules! parse_input {
     ($x:expr, $t:ident) => {
@@ -54,13 +119,11 @@ pub enum GameState {
 
 impl GameState {
     pub fn terminal(&self) -> bool {
-        match self {
-            GameState::Drawn | GameState::Won(_) => true,
-            _ => false,
-        }
+        matches!(self, GameState::Drawn | GameState::Won(_))
     }
 }
 
+#[allow(clippy::unusual_byte_groupings)]
 pub(in crate) const WIN_MASKS: &[u32] = &[
     0b000_000_111,
     0b000_111_000,
@@ -72,10 +135,8 @@ pub(in crate) const WIN_MASKS: &[u32] = &[
     0b100_010_001,
 ];
 
+#[allow(clippy::unusual_byte_groupings)]
 const BOARD_MASK: u32 = 0b111_111_111;
-
-#[derive(Clone, Debug)]
-pub struct LocalBoard([CellState; 9]);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Row {
@@ -108,7 +169,7 @@ impl LocalBoards {
         if (row.o >> idx) & 1 == 1 {
             return CellState::Played(Player::O);
         }
-        return CellState::Empty;
+        CellState::Empty
     }
 
     fn set(&mut self, global: usize, local: usize, who: Player) {
@@ -125,11 +186,6 @@ impl LocalBoards {
         }
     }
 
-    pub(in crate) fn mask(&self, global: usize) -> u32 {
-        let row = &self.rows[global / 3];
-        (row.o | row.x) >> (9 * (global % 3)) & BOARD_MASK
-    }
-
     fn check_winner(&self, global: usize, player: Player) -> GameState {
         let row = &self.rows[global / 3];
         let shift = 9 * (global % 3);
@@ -138,7 +194,10 @@ impl LocalBoards {
             Player::O => row.o >> shift,
         };
 
-        if WIN_MASKS.iter().any(|&win_mask| mask & win_mask == win_mask) {
+        if WIN_MASKS
+            .iter()
+            .any(|&win_mask| mask & win_mask == win_mask)
+        {
             return GameState::Won(player);
         }
 
@@ -150,17 +209,11 @@ impl LocalBoards {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub(in crate) struct GlobalStates {
     // LSB first; drawn if both x&y
     x: u16,
     o: u16,
-}
-
-impl Default for GlobalStates {
-    fn default() -> Self {
-        GlobalStates { x: 0, o: 0 }
-    }
 }
 
 impl GlobalStates {
@@ -188,10 +241,13 @@ impl GlobalStates {
 
     fn check_winner(&self, player: Player) -> GameState {
         let mask = self.playerbits(player);
-        if WIN_MASKS.iter().any(|&win_mask| mask & win_mask == win_mask) {
+        if WIN_MASKS
+            .iter()
+            .any(|&win_mask| mask & win_mask == win_mask)
+        {
             return GameState::Won(player);
         }
-        
+
         if self.donebits() == BOARD_MASK {
             GameState::Drawn
         } else {
@@ -219,9 +275,7 @@ impl GlobalStates {
                 self.x |= bit;
                 self.o |= bit;
             }
-            GameState::InPlay => {
-                return;
-            }
+            GameState::InPlay => {}
             GameState::Won(Player::X) => self.x |= bit,
             GameState::Won(Player::O) => self.o |= bit,
         };
@@ -235,10 +289,10 @@ pub struct Move {
 }
 
 impl Move {
-    pub fn from_coords(global: usize, local: usize) -> Self {
-        return Self {
+    pub fn from_coords(global: u8, local: u8) -> Self {
+        Self {
             bits: (global << 4 | local) as u8,
-        };
+        }
     }
 
     pub fn global(self) -> usize {
@@ -264,57 +318,131 @@ impl Move {
     pub fn bits(self) -> u8 {
         self.bits
     }
-}
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum MoveError {
-    WrongBoard,
-    WonBoard,
-    OutOfBounds,
-    NotEmpty,
-    GameOver,
+    pub fn print(&self) {
+        let row = self.global() / 3 * 3 + self.local() / 3;
+        let col = self.global() % 3 * 3 + self.local() % 3;
+        println!("{} {}", row, col);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Game {
-    pub(in crate) next_player: Player,
-    pub(in crate) next_board: Option<u8>,
+    pub(in crate) player: Player,
+    pub(in crate) last_move: Option<Move>,
     pub(in crate) local_boards: LocalBoards,
     pub(in crate) global_states: GlobalStates,
     pub(in crate) game_state: GameState,
-    hash: u64,
+}
+
+impl Default for Game {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Game {
     pub fn new() -> Game {
         Game {
-            next_player: Player::X,
-            next_board: None,
+            player: Player::X,
+            last_move: None,
             local_boards: Default::default(),
             global_states: Default::default(),
             game_state: GameState::InPlay,
-            hash: 0,
         }
     }
 
-    pub fn inplace_move(&mut self, m: Move) -> Result<(), MoveError> {
-        self.local_boards.set(m.global(), m.local(), self.next_player);
-        
-        let board_state = self.local_boards.check_winner(m.global(), self.next_player);
+    pub fn inplace_move(&mut self, m: Move) {
+        self.local_boards.set(m.global(), m.local(), self.player);
+
+        let board_state = self.local_boards.check_winner(m.global(), self.player);
         self.global_states.set(m.global(), board_state);
-        
-        if self.global_states.in_play(m.local()) {
-            self.next_board = Some(m.local() as u8);
-        } else {
-            self.next_board = None;
-        }
-        self.game_state = self.global_states.check_winner(self.next_player);
-        self.next_player = self.next_player.other();
-        return Ok(());
+
+        self.game_state = self.global_states.check_winner(self.player);
+        self.player = self.player.other();
+        self.last_move = Some(m);
     }
 
-    pub fn all_moves<'a>(&'a self) -> impl Iterator<Item = Move> + 'a {
-        MoveIterator::from_game(&self)
+    pub fn all_moves(&self) -> Vec<Move> {
+        match self.last_move {
+            Some(m) => {
+                let global = m.local();
+                if self.global_states.in_play(global) {
+                    (0..=8_u8)
+                        .filter(|local| {
+                            self.local_boards.at(global, *local as usize) == CellState::Empty
+                        })
+                        .map(|local| Move::from_coords(global as u8, local))
+                        .collect()
+                } else {
+                    (0..=8_u8)
+                        .filter(|global| self.global_states.in_play(*global as usize))
+                        .flat_map(|global| {
+                            (0..=8_u8)
+                                .filter(move |local| {
+                                    self.local_boards.at(global as usize, *local as usize)
+                                        == CellState::Empty
+                                })
+                                .map(move |local| Move::from_coords(global, local))
+                        })
+                        .collect()
+                }
+            }
+            _ => (0..=8_u8)
+                .filter(|global| self.global_states.in_play(*global as usize))
+                .flat_map(|global| {
+                    (0..=8_u8)
+                        .filter(move |local| {
+                            self.local_boards.at(global as usize, *local as usize)
+                                == CellState::Empty
+                        })
+                        .map(move |local| Move::from_coords(global, local))
+                })
+                .collect(),
+        }
+    }
+
+    fn random_move(&self) -> Move {
+        let global = self.last_move.unwrap().local();
+        let mut rng = rand::thread_rng();
+
+        if self.global_states.in_play(global) {
+            (0..=8_u8)
+                .filter(|local| self.local_boards.at(global, *local as usize) == CellState::Empty)
+                .choose(&mut rng)
+                .map(|local| Move::from_coords(global as u8, local))
+                .unwrap()
+        } else {
+            (0..=8_u8)
+                .filter(|global| self.global_states.in_play(*global as usize))
+                .choose(&mut rng)
+                .map(|global| {
+                    (0..=8_u8)
+                        .filter(move |local| {
+                            self.local_boards.at(global as usize, *local as usize)
+                                == CellState::Empty
+                        })
+                        .choose(&mut rng)
+                        .map(|local| Move::from_coords(global as u8, local))
+                        .unwrap()
+                })
+                .unwrap()
+        }
+    }
+
+    pub fn random_playout(&mut self) -> (f32, f32) {
+        while self.game_state == GameState::InPlay {
+            self.inplace_move(self.random_move())
+        }
+        self.reward()
+    }
+
+    pub fn reward(&self) -> (f32, f32) {
+        match self.game_state {
+            GameState::Won(Player::X) => (1., 0.),
+            GameState::Won(Player::O) => (0., 1.),
+            _ => (0., 0.),
+        }
     }
 
     pub fn game_state(&self) -> GameState {
@@ -322,18 +450,15 @@ impl Game {
     }
 
     pub fn game_over(&self) -> bool {
-        match self.game_state {
-            GameState::InPlay => false,
-            _ => true,
-        }
+        !matches!(self.game_state, GameState::InPlay)
     }
 
     pub fn player(&self) -> Player {
-        self.next_player
+        self.player
     }
 
     pub fn board_to_play(&self) -> Option<usize> {
-        self.next_board.map(|b| b as usize)
+        self.last_move.map(|m| m.local())
     }
 
     pub fn at(&self, board: usize, cell: usize) -> CellState {
@@ -349,86 +474,188 @@ impl Game {
     }
 }
 
-struct MoveIterator<'a> {
-    game: &'a Game,
-    board: usize,
-    mask: u32,
-    cell: usize,
+#[derive(Debug)]
+pub struct Node {
+    children: HashMap<Move, Node>,
+    unvisited_moves: Vec<Move>,
+    visits: f32,
+    wins: f32,
 }
 
-impl<'a> MoveIterator<'a> {
-    fn from_game(game: &'a Game) -> Self {
-        let board = match game.board_to_play() {
-            Some(b) => b,
-            None => (0..9).find(|b| game.global_states.in_play(*b)).unwrap_or(9),
+impl Default for Node {
+    fn default() -> Self {
+        Self::new(&Game::default())
+    }
+}
+
+impl Node {
+    pub fn new(game: &Game) -> Node {
+        Node {
+            children: HashMap::new(),
+            unvisited_moves: game.all_moves(),
+            visits: 0.0,
+            wins: 0.0,
+        }
+    }
+
+    pub fn run(&mut self, game: &mut Game, run_time_nano: u32) {
+        let begin = time::Instant::now();
+        let mut count = 0;
+        while begin.elapsed() < time::Duration::new(0, run_time_nano) {
+            self.iteration(&mut game.clone());
+            count += 1;
+        }
+        eprintln!("{}", count);
+    }
+
+    pub fn iteration(&mut self, game: &mut Game) -> (f32, f32) {
+        let rewards = if !self.unvisited_moves.is_empty() {
+            //expand
+            let m = self.unvisited_moves.pop().unwrap();
+            game.inplace_move(m);
+            let mut child = Node {
+                unvisited_moves: game.all_moves(),
+                ..Default::default()
+            };
+            let p = game.player();
+
+            let mut rewards = game.random_playout();
+            if p == Player::X {
+                rewards = (rewards.1, rewards.0);
+            }
+            child.visits += 1.;
+            child.wins += rewards.0;
+            self.children.insert(m, child);
+            (rewards.1, rewards.0)
+        } else if !self.children.is_empty() {
+            //continue selection
+            let (m, child) = self.select_best_child(1.41);
+            game.inplace_move(m);
+
+            child.iteration(game)
+        } else {
+            //it was a leaf to begin with, should not really happen
+            game.reward()
         };
-        MoveIterator {
-            game: game,
-            cell: 0,
-            mask: game.local_boards.mask(board),
-            board: board,
-        }
+
+        self.visits += 1.;
+        self.wins += rewards.0;
+        (rewards.1, rewards.0)
+    }
+
+    pub fn select_child(&mut self, m: Move) -> Option<&mut Node> {
+        self.children.get_mut(&m)
+    }
+
+    pub fn select_best_child(&mut self, c: f32) -> (Move, &mut Node) {
+        let visits = self.visits.ln();
+        let (m, node) = self
+            .children
+            .iter_mut()
+            .max_by_key(|(_, child)| {
+                NonNan::new(child.wins / child.visits + c * (visits / child.visits).sqrt())
+            })
+            .unwrap();
+        (*m, node)
     }
 }
 
-impl<'a> Iterator for MoveIterator<'a> {
-    type Item = Move;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if self.cell >= 9 {
-                if let Some(_) = self.game.board_to_play() {
-                    return None;
-                }
-                self.board += 1;
-                if !self.game.global_states.in_play(self.board) {
-                    continue;
-                }
-                if self.board >= 9 {
-                    return None;
-                }
-                self.cell = 0;
-                self.mask = self.game.local_boards.mask(self.board);
-            }
-
-            let bit = self.mask & 1 == 0;
-            let cell = self.cell;
-            self.mask >>= 1;
-            self.cell += 1;
-            if bit {
-                return Some(Move::from_coords(self.board, cell));
-            }
-        }
+#[allow(dead_code)]
+fn read_input() -> (String, String) {
+    let mut input_line = String::new();
+    io::stdin().read_line(&mut input_line).unwrap();
+    let inputs = input_line.split(' ').collect::<Vec<_>>();
+    let mut input_line_2 = String::new();
+    io::stdin().read_line(&mut input_line_2).unwrap();
+    let valid_action_count = parse_input!(input_line_2, i32);
+    for _ in 0..valid_action_count as usize {
+        io::stdin().read_line(&mut input_line_2).unwrap();
     }
+
+    (inputs[0].to_string(), inputs[1].to_string())
 }
 
+#[allow(dead_code)]
 fn codingame() {
+    let inputs = read_input();
+
+    let mut game = Game::default();
+    let mut root: &mut Node = &mut Node::new(&game);
+    let mut m: Move;
+
+    match inputs.0.chars().next() {
+        Some('-') => {
+            game.inplace_move(Move::from_coords(4, 4));
+            root.unvisited_moves = game.all_moves();
+            root.run(&mut game, 900000000);
+            println!("4 4");
+        }
+        Some(_) => {
+            let opponent_row = parse_input!(inputs.0, i8);
+            let opponent_col = parse_input!(inputs.1, i8);
+
+            game.inplace_move(Move::from_coords(
+                (opponent_col / 3 + (opponent_row / 3) * 3) as u8,
+                (opponent_col % 3 + (opponent_row % 3) * 3) as u8,
+            ));
+            root.unvisited_moves = game.all_moves();
+            root.run(&mut game, 900000000);
+
+            let child = root.select_best_child(0.0);
+            m = child.0;
+            root = child.1;
+
+            game.inplace_move(m);
+            m.print();
+        }
+        _ => panic!(),
+    }
+
     // game loop
     loop {
-        let mut input_line = String::new();
-        io::stdin().read_line(&mut input_line).unwrap();
-        let inputs = input_line.split(" ").collect::<Vec<_>>();
-        let opponent_row = parse_input!(inputs[0], i32);
-        let opponent_col = parse_input!(inputs[1], i32);
-        let mut input_line = String::new();
-        io::stdin().read_line(&mut input_line).unwrap();
-        let valid_action_count = parse_input!(input_line, i32);
-        for i in 0..valid_action_count as usize {
-            let mut input_line = String::new();
-            io::stdin().read_line(&mut input_line).unwrap();
-            let inputs = input_line.split(" ").collect::<Vec<_>>();
-            let row = parse_input!(inputs[0], i32);
-            let col = parse_input!(inputs[1], i32);
-        }
+        let inputs = read_input();
+        let opponent_row = parse_input!(inputs.0, i8);
+        let opponent_col = parse_input!(inputs.1, i8);
+        let opp_move = Move::from_coords(
+            (opponent_col / 3 + (opponent_row / 3) * 3) as u8,
+            (opponent_col % 3 + (opponent_row % 3) * 3) as u8,
+        );
+        game.inplace_move(opp_move);
+        root = root.select_child(opp_move).unwrap();
+        root.run(&mut game, 90000000);
 
-        // Write an action using println!("message...");
-        // To debug: eprintln!("Debug message...");
+        let child = root.select_best_child(0.0);
+        m = child.0;
+        root = child.1;
+        game.inplace_move(m);
+        m.print();
+    }
+}
 
-        println!("0 0");
+#[allow(dead_code)]
+fn perf_test() {
+    let mut root = &mut Node::new(&Game::default());
+    let mut m: Move;
+
+    let mut game = Game::default();
+
+    game.inplace_move(Move::from_coords(4, 4));
+    root.run(&mut game, 900000000);
+    println!("4 4");
+
+    // game loop
+    loop {
+        root.run(&mut game, 90000000);
+
+        let child = root.select_best_child(0.0);
+        m = child.0;
+        root = child.1;
+
+        game.inplace_move(m);
+        m.print();
     }
 }
 
 fn main() {
-
-    codingame();
+    perf_test();
 }
