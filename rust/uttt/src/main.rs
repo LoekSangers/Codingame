@@ -1,4 +1,4 @@
-use rand::prelude::IteratorRandom;
+use rand::prelude::{IteratorRandom, ThreadRng};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::vec::Vec;
@@ -402,27 +402,27 @@ impl Game {
         }
     }
 
-    fn random_move(&self) -> Move {
+    fn random_move(&self, rng: &mut ThreadRng) -> Move {
         let global = self.last_move.unwrap().local();
-        let mut rng = rand::thread_rng();
+        // let mut rng = rand::thread_rng();
 
         if self.global_states.in_play(global) {
             (0..=8_u8)
                 .filter(|local| self.local_boards.at(global, *local as usize) == CellState::Empty)
-                .choose(&mut rng)
+                .choose(rng)
                 .map(|local| Move::from_coords(global as u8, local))
                 .unwrap()
         } else {
             (0..=8_u8)
                 .filter(|global| self.global_states.in_play(*global as usize))
-                .choose(&mut rng)
+                .choose(rng)
                 .map(|global| {
                     (0..=8_u8)
                         .filter(move |local| {
                             self.local_boards.at(global as usize, *local as usize)
                                 == CellState::Empty
                         })
-                        .choose(&mut rng)
+                        .choose(rng)
                         .map(|local| Move::from_coords(global as u8, local))
                         .unwrap()
                 })
@@ -431,8 +431,9 @@ impl Game {
     }
 
     pub fn random_playout(&mut self) -> (f32, f32) {
+        let mut rng = rand::thread_rng();
         while self.game_state == GameState::InPlay {
-            self.inplace_move(self.random_move())
+            self.inplace_move(self.random_move(&mut rng))
         }
         self.reward()
     }
@@ -538,6 +539,7 @@ impl Node {
             game.reward()
         };
 
+        //backpropagate
         self.visits += 1.;
         self.wins += rewards.0;
         (rewards.1, rewards.0)
