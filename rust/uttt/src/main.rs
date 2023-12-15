@@ -79,7 +79,7 @@ pub(in crate) const fn local_to_global(local: usize) -> usize {
 #[allow(clippy::unusual_byte_groupings)]
 const BOARD_MASK: usize = 0b111_111_111;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub(in crate) struct LocalBoards {
     boards_x: [usize; 9],
     boards_o: [usize; 9],
@@ -259,10 +259,12 @@ impl Move {
     pub fn from_coords(global: usize, local: usize) -> Self {
         Self {
             bits: (global << 9 | local),
+            bits: (global << 9 | local),
         }
     }
     #[inline]
     pub fn global(self) -> usize {
+        self.bits >> 9
         self.bits >> 9
     }
     #[inline]
