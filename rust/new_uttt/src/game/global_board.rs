@@ -44,7 +44,10 @@ impl GlobalBoard {
         let bit = 1_usize << board;
         match state {
             UTTTResult::Drawn => {
-                self.playable_boards.retain(|&x| x != board);
+                match self.playable_boards.iter().position(|&loc| loc == board) {
+                    Some(index) => self.playable_boards.swap_remove(index),
+                    None => 0
+                }; 
 
                 self.x |= bit;
                 self.o |= bit;
@@ -61,7 +64,10 @@ impl GlobalBoard {
             }
             UTTTResult::InPlay => UTTTResult::InPlay,
             UTTTResult::Won(Player::X) => {
-                self.playable_boards.retain(|&x| x != board);
+                match self.playable_boards.iter().position(|&loc| loc == board) {
+                    Some(index) => self.playable_boards.swap_remove(index),
+                    None => 0
+                }; 
 
                 self.x_won += 1;
                 self.x |= bit;
@@ -84,7 +90,10 @@ impl GlobalBoard {
                 }
             }
             UTTTResult::Won(Player::O) => {
-                self.playable_boards.retain(|&x| x != board);
+                match self.playable_boards.iter().position(|&loc| loc == board) {
+                    Some(index) => self.playable_boards.swap_remove(index),
+                    None => 0
+                }; 
 
                 self.o_won += 1;
                 self.o |= bit;

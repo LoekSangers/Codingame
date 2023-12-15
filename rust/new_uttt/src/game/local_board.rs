@@ -40,7 +40,10 @@ impl LocalBoards {
 
     //#[inline]
     pub fn set(&mut self, global: usize, local: usize, player: Player) -> UTTTResult {
-        self.legal_moves[global].retain(|&loc| loc != local);
+        match self.legal_moves[global].iter().position(|&loc| loc == local) {
+            Some(index) => self.legal_moves[global].swap_remove(index),
+            None => 0
+        };        
         match player {
             Player::O => {
                 self.boards_o[global] |= local;

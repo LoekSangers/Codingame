@@ -3,10 +3,11 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::rc::Weak;
+use std::thread::panicking;
 
 use super::traits::*;
 
-pub const C: f64 = 1.414_f64;
+pub const C: f64 = 0.6_f64;
 
 pub struct MctsNode<P, S, R, A>
 where
@@ -24,6 +25,10 @@ where
 
     wins: Cell<f64>,
     visits: Cell<f64>,
+
+    exploration_score: Cell<f64>,
+    max_child_exploration_score: Cell<f64>,
+    child_to_explore: Cell<Weak<MctsNode<P, S, R, A>>>,
 }
 
 impl<P, S, R, A> MctsNode<P, S, R, A>
@@ -41,6 +46,9 @@ where
             children: RefCell::new(HashMap::new()),
             wins: Cell::new(0.),
             visits: Cell::new(1.),
+            exploration_score: Cell::new(0.),
+            max_child_exploration_score: Cell::new(0.),
+            child_to_explore: Cell::new(Weak::new()),
         }
     }
 
@@ -52,6 +60,9 @@ where
             children: RefCell::new(HashMap::new()),
             wins: Cell::new(0_f64),
             visits: Cell::new(1_f64),
+            exploration_score: Cell::new(0.),
+            max_child_exploration_score: Cell::new(0.),
+            child_to_explore: Cell::new(Weak::new()),
         }
     }
 
@@ -74,7 +85,7 @@ where
             let best = children
                 .values()
                 .reduce(|acc, node| {
-                    if acc.visits.get() > node.visits.get() {
+                    if acc.wins.get() / acc.visits.get() > node.wins.get() / node.visits.get() {
                         acc
                     } else {
                         node
@@ -92,13 +103,9 @@ where
         let uc = self_ref.unvisited_actions.borrow();
         let children = self_ref.children.borrow();
         if uc.is_empty() && !children.is_empty() {
-            self_ref
-                .children
-                .borrow()
-                .values()
-                .reduce(|acc, node| if acc.uct() > node.uct() { acc } else { node })
-                .unwrap()
-                .clone()
+            let child_ref = self_ref.child_to_explore.take().upgrade().unwrap();
+            self_ref.child_to_explore.set(Rc::downgrade(&child_ref));
+            child_ref
         } else if children.is_empty() {
             drop(uc);
             drop(children);
@@ -131,12 +138,24 @@ where
         parent_ref.unvisited_actions.borrow_mut().clear();
     }
 
-    pub fn backpropagate(&self, result: &R) {
-        self.visits.set(self.visits.get() + 1_f64);
-        self.wins
-            .set(self.wins.get() + self.state.next_player().reward(result));
-        match &self.parent.upgrade() {
-            Some(parent_node) => parent_node.backpropagate(result),
+    pub fn backpropagate(self_ref: Rc<MctsNode<P, S, R, A>>, result: &R) {
+        self_ref.visits.set(self_ref.visits.get() + 1_f64);
+        self_ref
+            .wins
+            .set(self_ref.wins.get() + self_ref.state.next_player().reward(result));
+        match &self_ref.parent.upgrade() {
+            Some(parent_node) => Self::backpropagate(Rc::clone(parent_node), result),
+            None => (),
+        }
+        let utc = self_ref.uct();
+        self_ref.exploration_score.set(utc);
+        match &self_ref.parent.upgrade() {
+            Some(parent_node) => {
+                if self_ref.exploration_score > parent_node.max_child_exploration_score {
+                    parent_node.child_to_explore.set(Rc::downgrade(&self_ref));
+                    parent_node.max_child_exploration_score.set(utc);
+                }
+            }
             None => (),
         }
     }

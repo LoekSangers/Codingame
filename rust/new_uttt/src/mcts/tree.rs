@@ -26,7 +26,7 @@ where
     A: GameAction,
 {
     pub fn new(state: S) -> Self {
-        let node_ref =  Rc::new(MctsNode::new(state));
+        let node_ref = Rc::new(MctsNode::new(state));
         MctsNode::select(Rc::clone(&node_ref));
         MctsTree {
             root: RefCell::new(node_ref),
@@ -44,9 +44,9 @@ where
             let end_state = selected.state.clone();
             if end_state.playable() {
                 let result = end_state.simulate_game(rng);
-                selected.backpropagate(&result);
-            }else{
-                selected.backpropagate(&end_state.outcome());
+                MctsNode::backpropagate(Rc::clone(&selected), &result);
+            } else {
+                MctsNode::backpropagate(Rc::clone(&selected), &end_state.outcome());
             }
             count += 1;
         }
@@ -56,13 +56,8 @@ where
     pub fn move_down(&self, action: A) {
         MctsNode::expand(Rc::clone(&self.root.borrow()));
 
-        let child: Rc<MctsNode<P, S, R, A>> = Rc::clone(
-            self.root
-                .borrow()
-                .children
-                .borrow()
-                .get(&action).unwrap()
-        );
+        let child: Rc<MctsNode<P, S, R, A>> =
+            Rc::clone(self.root.borrow().children.borrow().get(&action).unwrap());
 
         self.root.replace(child);
     }
