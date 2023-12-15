@@ -3,95 +3,107 @@ extern crate rand;
 
 use std::io;
 
-use std::rc::Rc;
+use new_uttt::game;
+use new_uttt::mcts;
 
-use new_uttt::game::game_state::GameState;
-use new_uttt::masks::LOCAL_MOVES;
-use new_uttt::{GameMove, Node};
+use game::game_action::Action;
+use game::game_state::State;
+use game::masks::LOCAL_MOVES;
+use mcts::tree::MctsTree;
 
 fn main() {
     codingame();
 }
+// fn perf_test() {
+//     let mut rng = rand::thread_rng();
 
-#[inline]
+//     let mut game = State::default();
+//     let mcts = MctsTree::new(game);
+
+//     let mut action = Action::from_coords(4, LOCAL_MOVES[4]);
+
+//     mcts.move_down(action);
+//     mcts.expand_tree(999999990, &mut rng);
+//     println!("4 4");
+
+//     // game loop
+//     loop {
+//         mcts.expand_tree(99000000, &mut rng);
+
+//         let child = mcts.root.borrow().best_child();
+//         game = child.state.clone();
+//         action = game.last_action.unwrap();
+//         mcts.root.replace(child);
+
+//         action.print();
+//         if !game.playable(){
+            
+//             println!("{:?}", game.outcome());
+//             return;
+//         }
+//     }
+// }
+
+//#[inline]
 fn codingame() {
     let mut rng = rand::thread_rng();
     let inputs = read_input();
 
-    let mut game = GameState::default();
-    let mut root: Rc<Node<GameMove>> = Rc::new(Node::new());
-    let mut m: GameMove;
+    let game = State::default();
+    let mcts = MctsTree::new(game);
+    let mut action: Action;
 
-    match inputs.0.chars().next() {
-        Some('-') => {
-            game.inplace_move(&GameMove::from_coords(4, LOCAL_MOVES[4]));
+    if inputs.0 < 0 {
+        action = Action::from_coords(4, LOCAL_MOVES[4]);
 
-            let mut unvisited_moves = root.unvisited_moves.borrow_mut();
-            unvisited_moves.append(&mut game.all_moves());
-            drop(unvisited_moves);
+        mcts.move_down(action);
+        mcts.expand_tree(999999995, &mut rng);
+        println!("4 4");
+    } else {
+        let opponent_row = inputs.0;
+        let opponent_col = inputs.1;
 
-            Node::mcts(Rc::clone(&root), &mut game, 999999995, &mut rng);
-            println!("4 4");
-        },
-        Some(_) => {
-            let opponent_row = inputs.0.parse::<i8>().unwrap();
-            let opponent_col = inputs.1.parse::<i8>().unwrap();
+        action = Action::from_coords(
+            (opponent_col / 3 + (opponent_row / 3) * 3) as usize,
+            LOCAL_MOVES[(opponent_col % 3 + (opponent_row % 3) * 3) as usize],
+        );
 
-            game.inplace_move(&GameMove::from_coords(
-                (opponent_col / 3 + (opponent_row / 3) * 3) as usize,
-                LOCAL_MOVES[(opponent_col % 3 + (opponent_row % 3) * 3) as usize],
-            ));
+        mcts.move_down(action);
+        mcts.expand_tree(999999995, &mut rng);
 
-            let mut unvisited_moves = root.unvisited_moves.borrow_mut();
-            unvisited_moves.append(&mut game.all_moves());
-            drop(unvisited_moves);
+        let child = mcts.root.borrow().best_child();
+        action = child.state.last_action.unwrap();
+        mcts.root.replace(child);
 
-            Node::mcts(Rc::clone(&root), &mut game.clone(), 999999997, &mut rng);
-
-            let child = root.best_child();
-            m = child.last_action.unwrap();
-            root = child;
-
-            game.inplace_move(&m);
-            m.print();
-        },
-        _ => panic!(),
+        action.print();
     }
 
     // game loop
     loop {
         let inputs = read_input();
-        let opponent_row = inputs.0.trim().parse::<i8>().unwrap();
-        let opponent_col = inputs.1.trim().parse::<i8>().unwrap();
-        let opp_move = GameMove::from_coords(
+        let opponent_row = inputs.0;
+        let opponent_col = inputs.1;
+        let opp_move = Action::from_coords(
             (opponent_col / 3 + (opponent_row / 3) * 3) as usize,
             LOCAL_MOVES[(opponent_col % 3 + (opponent_row % 3) * 3) as usize],
         );
-        game.inplace_move(&opp_move);
-        let next = Rc::clone(root
-            .children
-            .borrow()
-            .iter()
-            .find(|node| node.last_action == Some(opp_move))
-            .unwrap());
 
-        root = next;
+        mcts.move_down(opp_move);
+        mcts.expand_tree(99999995, &mut rng);
 
-        Node::mcts(Rc::clone(&root), &mut game, 99999900, &mut rng);
+        let child = mcts.root.borrow().best_child();
+        action = child.state.last_action.unwrap();
+        mcts.root.replace(child);
 
-        let child = root.best_child();
-        m = child.last_action.unwrap();
-        root = child;
-        game.inplace_move(&m);
-        m.print();
+        action.print();
     }
 }
 
-#[inline]
-fn read_input() -> (String, String) {
+//#[inline]
+fn read_input() -> (i8, i8) {
     let mut input_line = String::new();
     io::stdin().read_line(&mut input_line).unwrap();
-    let inputs = input_line.split(' ').collect::<Vec<_>>();
+    let inputs = input_line.split_ascii_whitespace().collect::<Vec<_>>();
     let mut input_line_2 = String::new();
     io::stdin().read_line(&mut input_line_2).unwrap();
     let valid_action_count = input_line_2.trim().parse::<i32>().unwrap();
@@ -99,5 +111,8 @@ fn read_input() -> (String, String) {
         io::stdin().read_line(&mut input_line_2).unwrap();
     }
 
-    (inputs[0].to_string(), inputs[1].to_string())
+    (
+        inputs[0].trim().parse::<i8>().unwrap(),
+        inputs[1].trim().parse::<i8>().unwrap(),
+    )
 }

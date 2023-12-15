@@ -1,6 +1,9 @@
-use crate::masks::{LOCAL_MOVES, win_masks_for_move, BOARD_MASK};
+use super::masks::LOCAL_MOVES;
+use super::masks::win_masks_for_move;
+use super::masks::BOARD_MASK;
 
-use super::{game_state::BoardState, player::Player};
+use super::game_state::UTTTResult;
+use super::player::Player;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalBoards {
@@ -30,13 +33,13 @@ impl Default for LocalBoards {
 }
 
 impl LocalBoards {
-    #[inline]
+    //#[inline]
     pub fn local_moves(&self, global: usize) -> &Vec<usize> {
         &self.legal_moves[global]
     }
 
-    #[inline]
-    pub fn set(&mut self, global: usize, local: usize, player: Player) -> BoardState {
+    //#[inline]
+    pub fn set(&mut self, global: usize, local: usize, player: Player) -> UTTTResult {
         self.legal_moves[global].retain(|&loc| loc != local);
         match player {
             Player::O => {
@@ -45,7 +48,7 @@ impl LocalBoards {
                     .iter()
                     .any(|&win_mask| self.boards_o[global] & win_mask == win_mask)
                 {
-                    return BoardState::Won(Player::O);
+                    return UTTTResult::Won(Player::O);
                 }
             }
             Player::X => {
@@ -54,14 +57,14 @@ impl LocalBoards {
                     .iter()
                     .any(|&win_mask| self.boards_x[global] & win_mask == win_mask)
                 {
-                    return BoardState::Won(Player::X);
+                    return UTTTResult::Won(Player::X);
                 }
             }
         }
         if (self.boards_o[global] | self.boards_x[global]) == BOARD_MASK {
-            BoardState::Drawn
+            UTTTResult::Drawn
         } else {
-            BoardState::InPlay
+            UTTTResult::InPlay
         }
     }
 }

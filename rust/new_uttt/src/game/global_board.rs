@@ -1,8 +1,9 @@
 use std::cmp::Ordering;
 
-use crate::masks::win_masks_for_move;
+use super::masks::win_masks_for_move;
 
-use super::{player::Player, game_state::BoardState};
+use super::player::Player;
+use super::game_state::UTTTResult;
 
 #[derive(Clone)]
 pub struct GlobalBoard {
@@ -15,14 +16,14 @@ pub struct GlobalBoard {
 }
 
 impl Default for GlobalBoard {
-    #[inline]
+    //#[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl GlobalBoard {
-    #[inline]
+    //#[inline]
     pub fn new() -> GlobalBoard {
         GlobalBoard {
             x: 0,
@@ -33,16 +34,16 @@ impl GlobalBoard {
         }
     }
 
-    #[inline]
-    pub(in crate) fn in_play(&self, board: usize) -> bool {
+    //#[inline]
+    pub fn in_play(&self, board: usize) -> bool {
         self.playable_boards.contains(&board)
     }
 
-    #[inline]
-    pub fn set(&mut self, board: usize, state: BoardState) -> BoardState {
+    //#[inline]
+    pub fn set(&mut self, board: usize, state: UTTTResult) -> UTTTResult {
         let bit = 1_usize << board;
         match state {
-            BoardState::Drawn => {
+            UTTTResult::Drawn => {
                 self.playable_boards.retain(|&x| x != board);
 
                 self.x |= bit;
@@ -50,16 +51,16 @@ impl GlobalBoard {
 
                 if self.playable_boards.is_empty() {
                     match self.x_won.cmp(&self.o_won) {
-                        Ordering::Greater => BoardState::Won(Player::X),
-                        Ordering::Less => BoardState::Won(Player::O),
-                        Ordering::Equal => BoardState::Drawn,
+                        Ordering::Greater => UTTTResult::Won(Player::X),
+                        Ordering::Less => UTTTResult::Won(Player::O),
+                        Ordering::Equal => UTTTResult::Drawn,
                     }
                 } else {
-                    BoardState::InPlay
+                    UTTTResult::InPlay
                 }
             }
-            BoardState::InPlay => BoardState::InPlay,
-            BoardState::Won(Player::X) => {
+            UTTTResult::InPlay => UTTTResult::InPlay,
+            UTTTResult::Won(Player::X) => {
                 self.playable_boards.retain(|&x| x != board);
 
                 self.x_won += 1;
@@ -69,20 +70,20 @@ impl GlobalBoard {
                     .iter()
                     .any(|&win_mask| self.x & win_mask == win_mask)
                 {
-                    return BoardState::Won(Player::X);
+                    return UTTTResult::Won(Player::X);
                 }
 
                 if self.playable_boards.is_empty() {
                     match self.x_won.cmp(&self.o_won) {
-                        Ordering::Greater => BoardState::Won(Player::X),
-                        Ordering::Less => BoardState::Won(Player::O),
-                        Ordering::Equal => BoardState::Drawn,
+                        Ordering::Greater => UTTTResult::Won(Player::X),
+                        Ordering::Less => UTTTResult::Won(Player::O),
+                        Ordering::Equal => UTTTResult::Drawn,
                     }
                 } else {
-                    BoardState::InPlay
+                    UTTTResult::InPlay
                 }
             }
-            BoardState::Won(Player::O) => {
+            UTTTResult::Won(Player::O) => {
                 self.playable_boards.retain(|&x| x != board);
 
                 self.o_won += 1;
@@ -92,17 +93,17 @@ impl GlobalBoard {
                     .iter()
                     .any(|&win_mask| self.o & win_mask == win_mask)
                 {
-                    return BoardState::Won(Player::O);
+                    return UTTTResult::Won(Player::O);
                 }
 
                 if self.playable_boards.is_empty() {
                     match self.x_won.cmp(&self.o_won) {
-                        Ordering::Greater => BoardState::Won(Player::X),
-                        Ordering::Less => BoardState::Won(Player::O),
-                        Ordering::Equal => BoardState::Drawn,
+                        Ordering::Greater => UTTTResult::Won(Player::X),
+                        Ordering::Less => UTTTResult::Won(Player::O),
+                        Ordering::Equal => UTTTResult::Drawn,
                     }
                 } else {
-                    BoardState::InPlay
+                    UTTTResult::InPlay
                 }
             }
         }

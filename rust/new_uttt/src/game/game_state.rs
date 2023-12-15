@@ -1,59 +1,68 @@
 
 
-use rand::{rngs::ThreadRng, seq::IteratorRandom};
+use rand::rngs::ThreadRng;
+use rand::seq::IteratorRandom;
 
-use crate::{GameMove, masks::local_to_global};
+use super::masks::local_to_global;
 
-use super::{player::Player, local_board::LocalBoards, global_board::GlobalBoard};
+use super::mcts::traits::GameState;
 
-#[derive(PartialEq, Clone, Copy)]
-pub enum BoardState {
+use super::mcts::traits::GameResult;
+
+use super::player::Player;
+use super::local_board::LocalBoards;
+use super::global_board::GlobalBoard;
+use super::game_action::Action;
+
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum UTTTResult {
     Won(Player),
     Drawn,
     InPlay,
 }
 
+impl GameResult for UTTTResult {}
+
 #[derive(Clone)]
-pub struct GameState {
-    pub player: Player,
+pub struct State {
+    player: Player,
+    pub last_action: Option<Action>,
     pub last_local_move: Option<usize>,
     pub local_boards: LocalBoards,
     pub global_states: GlobalBoard,
-    pub game_state: BoardState,
+    pub result: UTTTResult,
 }
 
-impl Default for GameState {
-    #[inline]
+impl Default for State {
+    //#[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl GameState {
-    #[inline]
-    pub fn new() -> GameState {
-        GameState {
-            player: Player::X,
-            last_local_move: None,
-            local_boards: Default::default(),
-            global_states: Default::default(),
-            game_state: BoardState::InPlay,
-        }
+impl GameState<Player, UTTTResult, Action> for State {
+    fn current_player(&self) -> Player {
+        self.player
     }
 
-    #[inline]
-    pub fn inplace_move(&mut self, m: &GameMove) -> BoardState {
-        let board_state = self.local_boards.set(m.global(), m.local(), self.player);
-
-        self.game_state = self.global_states.set(m.global(), board_state);
-        self.player = self.player.other();
-        self.last_local_move = Some(m.local());
-
-        board_state
+    fn next_player(&self) -> Player {
+        self.player.other()
     }
 
-    #[inline]
-    pub fn all_moves(&self) -> Vec<GameMove> {
+    fn last_action(&self) -> Option<Action> {
+       self.last_action
+    }
+
+    fn outcome(&self) -> UTTTResult {
+        self.result
+    }
+    
+    fn playable(&self) -> bool {
+        self.result == UTTTResult::InPlay
+    }
+
+    //#[inline]
+    fn possible_actions(&self) -> Vec<Action> {
         match self.last_local_move {
             Some(last_local) => {
                 let global = local_to_global(last_local);
@@ -61,7 +70,7 @@ impl GameState {
                     self.local_boards
                         .local_moves(global)
                         .iter()
-                        .map(|&local| GameMove::from_coords(global, local))
+                        .map(|&local| Action::from_coords(global, local))
                         .collect()
                 } else {
                     self.global_states
@@ -71,7 +80,7 @@ impl GameState {
                             self.local_boards
                                 .local_moves(global)
                                 .iter()
-                                .map(move |&local| GameMove::from_coords(global, local))
+                                .map(move |&local| Action::from_coords(global, local))
                         })
                         .collect()
                 }
@@ -84,22 +93,72 @@ impl GameState {
                     self.local_boards
                         .local_moves(global)
                         .iter()
-                        .map(move |&local| GameMove::from_coords(global, local))
+                        .map(move |&local| Action::from_coords(global, local))
                 })
                 .collect(),
         }
     }
 
-    #[inline]
-    pub fn random_move(&self, rng: &mut ThreadRng) -> GameMove {
+    fn perform_action_copy(&self, action: &Action) -> Self {
+        let mut new_state = self.clone();        
+        
+        let board_state = new_state.local_boards.set(action.global(), action.local(), new_state.player);
+
+        new_state.result = new_state.global_states.set(action.global(), board_state);
+        new_state.player = new_state.player.other();
+        new_state.last_action = Some(*action);
+        new_state.last_local_move = Some(action.local());
+
+        new_state
+    }
+
+    //#[inline]
+    fn simulate_game(mut self, rng: &mut ThreadRng) -> UTTTResult {
+        loop {
+            let action = self.random_move(rng);
+
+            match action {
+                Some(action) => {
+                    let board_state = self.local_boards.set(action.global(), action.local(), self.player);
+
+                    self.result = self.global_states.set(action.global(), board_state);
+                    self.player = self.player.other();
+                    self.last_local_move = Some(action.local());
+        
+                    if self.result != UTTTResult::InPlay{
+                        return self.result;
+                    }
+                },
+                None => return UTTTResult::Drawn
+            }
+
+            
+        }
+    }
+}
+
+impl State {
+    //#[inline]
+    pub fn new() -> State {
+        State {
+            player: Player::X,
+            last_action: None,
+            last_local_move: None,
+            local_boards: Default::default(),
+            global_states: Default::default(),
+            result: UTTTResult::InPlay,
+        }
+    }    
+
+    //#[inline]
+    pub fn random_move(&self, rng: &mut ThreadRng) -> Option<Action> {
         let global = local_to_global(self.last_local_move.unwrap());
         if self.global_states.in_play(global) {
             self.local_boards
                 .local_moves(global)
                 .iter()
                 .choose(rng)
-                .map(|&local| GameMove::from_coords(global, local))
-                .unwrap()
+                .map(|&local| Action::from_coords(global, local))
         } else {
             self.global_states
                 .playable_boards
@@ -110,23 +169,10 @@ impl GameState {
                         .local_moves(global)
                         .iter()
                         .choose(rng)
-                        .map(|&local| GameMove::from_coords(global, local))
+                        .map(|&local| Action::from_coords(global, local))
                         .unwrap()
                 })
-                .unwrap()
         }
-    }
-
-    #[inline]
-    pub fn random_playout(&mut self, rng: &mut ThreadRng) {
-        while self.game_state == BoardState::InPlay {
-            self.inplace_move(&self.random_move(rng));
-        }
-    }
-
-    #[inline]
-    pub fn player(&self) -> Player {
-        self.player
     }
 }
 

@@ -14,7 +14,7 @@ pub enum Player {
 }
 
 impl Player {
-    #[inline]
+    //#[inline]
     pub const fn other(&self) -> Player {
         match self {
             Player::X => Player::O,
@@ -30,7 +30,7 @@ pub enum GameState {
 }
 
 #[allow(clippy::unusual_byte_groupings)]
-#[inline]
+//#[inline]
 pub(in crate) const fn win_masks_for_move(local: usize) -> &'static [usize] {
     match local {
         0b000_000_001 => &[0b000_000_111, 0b001_001_001, 0b100_010_001],
@@ -60,7 +60,7 @@ pub(in crate) const LOCAL_MOVES: &[usize] = &[
 ];
 
 #[allow(clippy::unusual_byte_groupings)]
-#[inline]
+//#[inline]
 pub(in crate) const fn local_to_global(local: usize) -> usize {
     match local {
         0b000_000_001 => 0,
@@ -107,12 +107,12 @@ impl Default for LocalBoards {
 }
 
 impl LocalBoards {
-    #[inline]
+    //#[inline]
     fn local_moves(&self, global: usize) -> &Vec<usize> {
         &self.legal_moves[global]
     }
 
-    #[inline]
+    //#[inline]
     fn set(&mut self, global: usize, local: usize, player: Player) -> GameState {
         self.legal_moves[global].retain(|&loc| loc != local);
         match player {
@@ -154,14 +154,14 @@ pub(in crate) struct GlobalStates {
 }
 
 impl Default for GlobalStates {
-    #[inline]
+    //#[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl GlobalStates {
-    #[inline]
+    //#[inline]
     pub fn new() -> GlobalStates {
         GlobalStates {
             x: 0,
@@ -172,12 +172,12 @@ impl GlobalStates {
         }
     }
 
-    #[inline]
+    //#[inline]
     pub(in crate) fn in_play(&self, board: usize) -> bool {
         self.playable_boards.contains(&board)
     }
 
-    #[inline]
+    //#[inline]
     fn set(&mut self, board: usize, state: GameState) -> GameState {
         let bit = 1_usize << board;
         match state {
@@ -255,22 +255,22 @@ pub struct Move {
 }
 
 impl Move {
-    #[inline]
+    //#[inline]
     pub fn from_coords(global: usize, local: usize) -> Self {
         Self {
             bits: (global << 9 | local),
         }
     }
-    #[inline]
+    //#[inline]
     pub fn global(self) -> usize {
         self.bits >> 9
     }
-    #[inline]
+    //#[inline]
     pub fn local(self) -> usize {
         self.bits & BOARD_MASK
     }
 
-    #[inline]
+    //#[inline]
     pub fn print(&self) {
         let row = self.global() / 3 * 3 + local_to_global(self.local()) / 3;
         let col = self.global() % 3 * 3 + local_to_global(self.local()) % 3;
@@ -288,14 +288,14 @@ pub struct Game {
 }
 
 impl Default for Game {
-    #[inline]
+    //#[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl Game {
-    #[inline]
+    //#[inline]
     pub fn new() -> Game {
         Game {
             player: Player::X,
@@ -306,7 +306,7 @@ impl Game {
         }
     }
 
-    #[inline]
+    //#[inline]
     pub fn inplace_move(&mut self, m: &Move) -> GameState {
         let board_state = self.local_boards.set(m.global(), m.local(), self.player);
 
@@ -317,7 +317,7 @@ impl Game {
         board_state
     }
 
-    #[inline]
+    //#[inline]
     pub fn all_moves(&self) -> Vec<Move> {
         match self.last_local_move {
             Some(last_local) => {
@@ -355,7 +355,7 @@ impl Game {
         }
     }
 
-    #[inline]
+    //#[inline]
     fn random_move(&self, rng: &mut ThreadRng) -> Move {
         let global = local_to_global(self.last_local_move.unwrap());
         if self.global_states.in_play(global) {
@@ -382,14 +382,14 @@ impl Game {
         }
     }
 
-    #[inline]
+    //#[inline]
     pub fn random_playout(&mut self, rng: &mut ThreadRng) {
         while self.game_state == GameState::InPlay {
             self.inplace_move(&self.random_move(rng));
         }
     }
 
-    #[inline]
+    //#[inline]
     pub fn player(&self) -> Player {
         self.player
     }
@@ -404,18 +404,18 @@ pub struct Node {
 }
 
 impl Default for Node {
-    #[inline]
+    //#[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl Node {
-    #[inline]
+    //#[inline]
     fn score(&self) -> f32{
         self.wins / self.visits + 0.6 * (self.visits.ln() / self.visits).sqrt()
     }
-    #[inline]
+    //#[inline]
     pub fn new() -> Node {
         Node {
             children: HashMap::new(),
@@ -424,7 +424,7 @@ impl Node {
             wins: 0.0,
         }
     }
-    #[inline]
+    //#[inline]
     pub fn run(&mut self, game: &mut Game, run_time_nano: u32, rng: &mut ThreadRng) {
         let begin = time::Instant::now();
         let mut count = 0;
@@ -499,7 +499,7 @@ impl Node {
         (rewards.1, rewards.0)
     }
 
-    #[inline]
+    //#[inline]
     pub fn select_best_child(&mut self) -> (&Move, &mut Node) {
         self
             .children
@@ -513,7 +513,7 @@ impl Node {
             }).unwrap()
     }
 
-    #[inline]
+    //#[inline]
     pub fn select_best_move(&mut self) -> (&Move, &mut Node) {
         self
             .children
@@ -529,7 +529,7 @@ impl Node {
 }
 
 #[allow(dead_code)]
-#[inline]
+//#[inline]
 fn read_input() -> (String, String) {
     let mut input_line = String::new();
     io::stdin().read_line(&mut input_line).unwrap();
@@ -545,7 +545,7 @@ fn read_input() -> (String, String) {
 }
 
 #[allow(dead_code)]
-#[inline]
+//#[inline]
 fn codingame() {
     let mut rng = rand::thread_rng();
     let inputs = read_input();

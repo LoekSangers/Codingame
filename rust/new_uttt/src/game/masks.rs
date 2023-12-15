@@ -1,4 +1,4 @@
-#[inline]
+//#[inline]
 pub const fn win_masks_for_move(local: usize) -> &'static [usize] {
     match local {
         0b000_000_001 => &[0b000_000_111, 0b001_001_001, 0b100_010_001],
@@ -26,7 +26,7 @@ pub const LOCAL_MOVES: &[usize] = &[
     0b100_000_000,
 ];
 
-#[inline]
+//#[inline]
 pub const fn local_to_global(local: usize) -> usize {
     match local {
         0b000_000_001 => 0,
