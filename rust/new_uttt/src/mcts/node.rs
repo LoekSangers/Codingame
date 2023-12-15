@@ -3,11 +3,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::rc::Weak;
-use std::thread::panicking;
 
 use super::traits::*;
 
-pub const C: f64 = 0.6_f64;
+pub const C: f64 = 1.414_f64;
 
 pub struct MctsNode<P, S, R, A>
 where
@@ -25,10 +24,6 @@ where
 
     wins: Cell<f64>,
     visits: Cell<f64>,
-
-    exploration_score: Cell<f64>,
-    max_child_exploration_score: Cell<f64>,
-    child_to_explore: Cell<Weak<MctsNode<P, S, R, A>>>,
 }
 
 impl<P, S, R, A> MctsNode<P, S, R, A>
@@ -46,9 +41,6 @@ where
             children: RefCell::new(HashMap::new()),
             wins: Cell::new(0.),
             visits: Cell::new(1.),
-            exploration_score: Cell::new(0.),
-            max_child_exploration_score: Cell::new(0.),
-            child_to_explore: Cell::new(Weak::new()),
         }
     }
 
@@ -60,23 +52,11 @@ where
             children: RefCell::new(HashMap::new()),
             wins: Cell::new(0_f64),
             visits: Cell::new(1_f64),
-            exploration_score: Cell::new(0.),
-            max_child_exploration_score: Cell::new(0.),
-            child_to_explore: Cell::new(Weak::new()),
         }
     }
 
-    pub fn uct(&self) -> f64 {
-        match &self.parent.upgrade() {
-            Some(parent_node) => {
-                self.wins.get() / self.visits.get()
-                    + C * (parent_node.visits.get().ln() / self.visits.get()).sqrt()
-            }
-            None => {
-                self.wins.get() / self.visits.get()
-                    + C * (self.visits.get().ln() / self.visits.get()).sqrt()
-            }
-        }
+    pub fn uct(&self, visits: f64) -> f64 {
+        self.wins.get() / self.visits.get() + C * (visits / self.visits.get())
     }
 
     pub fn best_child(&self) -> Rc<MctsNode<P, S, R, A>> {
@@ -103,9 +83,23 @@ where
         let uc = self_ref.unvisited_actions.borrow();
         let children = self_ref.children.borrow();
         if uc.is_empty() && !children.is_empty() {
-            let child_ref = self_ref.child_to_explore.take().upgrade().unwrap();
-            self_ref.child_to_explore.set(Rc::downgrade(&child_ref));
-            child_ref
+            let visits = match self_ref.parent.upgrade() {
+                Some(parent_node) => parent_node.visits.get().ln(),
+                None => self_ref.visits.get().ln(),
+            };
+            self_ref
+                .children
+                .borrow()
+                .values()
+                .reduce(|acc, node| {
+                    if acc.uct(visits) > node.uct(visits) {
+                        acc
+                    } else {
+                        node
+                    }
+                })
+                .unwrap()
+                .clone()
         } else if children.is_empty() {
             drop(uc);
             drop(children);
@@ -138,24 +132,12 @@ where
         parent_ref.unvisited_actions.borrow_mut().clear();
     }
 
-    pub fn backpropagate(self_ref: Rc<MctsNode<P, S, R, A>>, result: &R) {
-        self_ref.visits.set(self_ref.visits.get() + 1_f64);
-        self_ref
-            .wins
-            .set(self_ref.wins.get() + self_ref.state.next_player().reward(result));
-        match &self_ref.parent.upgrade() {
-            Some(parent_node) => Self::backpropagate(Rc::clone(parent_node), result),
-            None => (),
-        }
-        let utc = self_ref.uct();
-        self_ref.exploration_score.set(utc);
-        match &self_ref.parent.upgrade() {
-            Some(parent_node) => {
-                if self_ref.exploration_score > parent_node.max_child_exploration_score {
-                    parent_node.child_to_explore.set(Rc::downgrade(&self_ref));
-                    parent_node.max_child_exploration_score.set(utc);
-                }
-            }
+    pub fn backpropagate(&self, result: &R) {
+        self.visits.set(self.visits.get() + 1_f64);
+        self.wins
+            .set(self.wins.get() + self.state.next_player().reward(result));
+        match &self.parent.upgrade() {
+            Some(parent_node) => parent_node.backpropagate(result),
             None => (),
         }
     }
