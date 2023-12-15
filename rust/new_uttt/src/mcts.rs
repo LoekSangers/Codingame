@@ -1,5 +1,10 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
+use std::time;
+
+use rand::rngs::ThreadRng;
+
+use crate::{GameState, BoardState};
 
 pub const C: f64 = 0.6_f64;
 
@@ -61,6 +66,19 @@ where
         }
     }
 
+    pub fn mcts(self_ref: Rc<Node<A>>, game: &mut GameState, run_time_nano: u32, rng: &mut ThreadRng){
+        let begin = time::Instant::now();
+        let mut count = 0_u32;
+        let duration = time::Duration::new(0, run_time_nano);
+
+        while begin.elapsed() < duration {
+            let selected = Self::select(Rc::clone(&self_ref));
+            selected.simulate(game, rng);
+            count += 1;
+        }
+        eprintln!("{}", count);
+    }
+
     pub fn uct(&self) -> f64 {
         match &self.parent.upgrade() {
             Some(parent_node) => {
@@ -92,8 +110,7 @@ where
         }
     }
 
-    pub fn select(self) -> Rc<Node<A>> {
-        let self_ref = Rc::new(self);
+    pub fn select(self_ref: Rc<Node<A>>) -> Rc<Node<A>> {
         let uc = self_ref.unvisited_moves.borrow();
         let children = self_ref.children.borrow();
         if uc.is_empty() && !children.is_empty() {
@@ -104,6 +121,13 @@ where
                 .reduce(|acc, node| if acc.uct() > node.uct() { acc } else { node })
                 .unwrap()
                 .clone()
+        } else if children.is_empty(){
+            drop(uc);
+            drop(children);
+            Self::expand(Rc::clone(&self_ref));
+            let children = self_ref.children.borrow();
+
+            children.first().unwrap().clone()
         } else {
             drop(uc);
             drop(children);
@@ -111,8 +135,7 @@ where
         }
     }
 
-    pub fn expand(self) {
-        let parent_ref = Rc::new(self);
+    pub fn expand(parent_ref: Rc<Node<A>>) {
 
         let uc = parent_ref.unvisited_moves.borrow();
         let mut children = parent_ref.children.borrow_mut();
@@ -126,7 +149,11 @@ where
         parent_ref.unvisited_moves.borrow_mut().clear();
     }
 
-    pub fn simulate(&self) {}
+    pub fn simulate(&self, game: &mut GameState, rng: &mut ThreadRng) {
+        while game.game_state == BoardState::InPlay {
+            game.inplace_move(&game.random_move(rng));
+        }
+    }
 
     pub fn backpropagate(&self, end: GameEnd) {
         self.visits.set(self.visits.get() + 1_f64);
