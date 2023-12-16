@@ -27,7 +27,7 @@ impl GamePlayer<UTTTResult> for Player{
                     0.
                 }
             },
-            UTTTResult::Drawn => 0.3,
+            UTTTResult::Drawn => 0.5,
             UTTTResult::InPlay => 0.,
         }
     }

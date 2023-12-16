@@ -1,4 +1,4 @@
-use rand::rngs::ThreadRng;
+use super::cg_rand::Rng;
 
 pub trait GameResult {}
 
@@ -22,7 +22,7 @@ where
 
     fn perform_action_copy(&self, action: &A) -> Self;
 
-    fn simulate_game(self, rng: &mut ThreadRng) -> R;
+    fn simulate_game(self, rng: &mut Box<Rng>) -> R;
 
     fn outcome(&self) -> R;
     fn playable(&self) -> bool;

@@ -74,15 +74,14 @@ pub mod game {
         }
     }
     pub mod game_state {
-        use rand::rngs::ThreadRng;
-        use rand::seq::IteratorRandom;
+        use super::cg_rand::Rng;
         use super::masks::local_to_global;
         use super::mcts::traits::GameState;
         use super::mcts::traits::GameResult;
-        use super::player::Player;
-        use super::local_board::LocalBoards;
-        use super::global_board::GlobalBoard;
         use super::game_action::Action;
+        use super::global_board::GlobalBoard;
+        use super::local_board::LocalBoards;
+        use super::player::Player;
         #[derive(PartialEq, Clone, Copy, Debug)]
         pub enum UTTTResult {
             Won(Player),
@@ -161,29 +160,29 @@ pub mod game {
             }
             fn perform_action_copy(&self, action: &Action) -> Self {
                 let mut new_state = self.clone();
+                new_state.player = new_state.player.other();
                 let board_state = new_state.local_boards.set(
                     action.global(),
                     action.local(),
                     new_state.player,
                 );
                 new_state.result = new_state.global_states.set(action.global(), board_state);
-                new_state.player = new_state.player.other();
                 new_state.last_action = Some(*action);
                 new_state.last_local_move = Some(action.local());
                 new_state
             }
-            fn simulate_game(mut self, rng: &mut ThreadRng) -> UTTTResult {
+            fn simulate_game(mut self, rng: &mut Box<Rng>) -> UTTTResult {
                 loop {
                     let action = self.random_move(rng);
                     match action {
                         Some(action) => {
+                            self.player = self.player.other();
                             let board_state = self.local_boards.set(
                                 action.global(),
                                 action.local(),
                                 self.player,
                             );
                             self.result = self.global_states.set(action.global(), board_state);
-                            self.player = self.player.other();
                             self.last_local_move = Some(action.local());
                             if self.result != UTTTResult::InPlay {
                                 return self.result;
@@ -205,21 +204,15 @@ pub mod game {
                     result: UTTTResult::InPlay,
                 }
             }
-            pub fn random_move(&self, rng: &mut ThreadRng) -> Option<Action> {
+            pub fn random_move(&self, rng: &mut Box<Rng>) -> Option<Action> {
                 let global = local_to_global(self.last_local_move.unwrap());
                 if self.global_states.in_play(global) {
-                    self.local_boards
-                        .local_moves(global)
-                        .iter()
-                        .choose(rng)
+                    rng.choice(self.local_boards.local_moves(global).iter())
                         .map(|&local| Action::from_coords(global, local))
                 } else {
-                    self.global_states.playable_boards.iter().choose(rng).map(
+                    rng.choice(self.global_states.playable_boards.iter()).map(
                         |&global| {
-                            self.local_boards
-                                .local_moves(global)
-                                .iter()
-                                .choose(rng)
+                            rng.choice(self.local_boards.local_moves(global).iter())
                                 .map(|&local| Action::from_coords(global, local))
                                 .unwrap()
                         },
@@ -248,7 +241,7 @@ pub mod game {
             fn reward(&self, result: &UTTTResult) -> f64 {
                 match result {
                     UTTTResult::Won(winner) => if self == winner { 1. } else { 0. },
-                    UTTTResult::Drawn => 0.3,
+                    UTTTResult::Drawn => 0.5,
                     UTTTResult::InPlay => 0.,
                 }
             }
@@ -436,7 +429,7 @@ pub mod mcts {
         use std::rc::Rc;
         use std::rc::Weak;
         use super::traits::*;
-        pub const C: f64 = 1.414_f64;
+        pub const C: f64 = 0.6_f64;
         pub struct MctsNode<P, S, R, A>
         where
             P: GamePlayer<R>,
@@ -448,8 +441,9 @@ pub mod mcts {
             parent: Weak<MctsNode<P, S, R, A>>,
             pub children: RefCell<HashMap<A, Rc<MctsNode<P, S, R, A>>>>,
             unvisited_actions: RefCell<Vec<A>>,
-            wins: Cell<f64>,
-            visits: Cell<f64>,
+            expanded: Cell<bool>,
+            pub wins: Cell<f64>,
+            pub visits: Cell<f64>,
         }
         impl<P, S, R, A> MctsNode<P, S, R, A>
         where
@@ -466,6 +460,7 @@ pub mod mcts {
                     children: RefCell::new(HashMap::new()),
                     wins: Cell::new(0.),
                     visits: Cell::new(1.),
+                    expanded: Cell::new(false),
                 }
             }
             pub fn create_child(state: S, parent: Weak<MctsNode<P, S, R, A>>) -> Self {
@@ -476,10 +471,8 @@ pub mod mcts {
                     children: RefCell::new(HashMap::new()),
                     wins: Cell::new(0_f64),
                     visits: Cell::new(1_f64),
+                    expanded: Cell::new(false),
                 }
-            }
-            pub fn uct(&self, visits: f64) -> f64 {
-                self.wins.get() / self.visits.get() + C * (visits / self.visits.get())
             }
             pub fn best_child(&self) -> Rc<MctsNode<P, S, R, A>> {
                 let children = self.children.borrow();
@@ -500,15 +493,22 @@ pub mod mcts {
                     panic!("There is no best move")
                 }
             }
-            pub fn select(self_ref: Rc<MctsNode<P, S, R, A>>) -> Rc<MctsNode<P, S, R, A>> {
+            pub fn uct(&self, visits: f64) -> f64 {
+                self.wins.get() / self.visits.get() + C * (visits / self.visits.get())
+            }
+            pub fn select(
+                self_ref: Rc<MctsNode<P, S, R, A>>,
+                depth: usize,
+            ) -> Rc<MctsNode<P, S, R, A>> {
+                if depth == 0 {
+                    return self_ref;
+                }
                 let uc = self_ref.unvisited_actions.borrow();
                 let children = self_ref.children.borrow();
-                if uc.is_empty() && !children.is_empty() {
-                    let visits = match self_ref.parent.upgrade() {
-                        Some(parent_node) => parent_node.visits.get().ln(),
-                        None => self_ref.visits.get().ln(),
-                    };
-                    self_ref
+                let fully_expanded = self_ref.expanded.get();
+                if fully_expanded && !children.is_empty() {
+                    let visits = self_ref.visits.get().ln();
+                    let selection = self_ref
                         .children
                         .borrow()
                         .values()
@@ -518,43 +518,42 @@ pub mod mcts {
                             node
                         })
                         .unwrap()
-                        .clone()
-                } else if children.is_empty() {
+                        .clone();
+                    MctsNode::select(selection, depth - 1)
+                } else if !fully_expanded {
                     drop(uc);
                     drop(children);
-                    Self::expand(Rc::clone(&self_ref));
-                    let children = self_ref.children.borrow();
-                    children.values().next().unwrap().clone()
+                    let mut unvisited_actions = self_ref.unvisited_actions.borrow_mut();
+                    let next_action = unvisited_actions.pop();
+                    drop(unvisited_actions);
+                    match next_action {
+                        Some(action) => {
+                            let mut children = self_ref.children.borrow_mut();
+                            let state = self_ref.state.perform_action_copy(&action);
+                            let child =
+                                Rc::new(MctsNode::create_child(state, Rc::downgrade(&self_ref)));
+                            children.insert(action.clone(), Rc::clone(&child));
+                            child
+                        }
+                        None => {
+                            self_ref.expanded.set(true);
+                            MctsNode::select(self_ref, depth - 1)
+                        }
+                    }
                 } else {
                     drop(uc);
                     drop(children);
                     self_ref
                 }
             }
-            pub fn expand(parent_ref: Rc<MctsNode<P, S, R, A>>) {
-                let uc = parent_ref.unvisited_actions.borrow();
-                let mut children = parent_ref.children.borrow_mut();
-                if !uc.is_empty() {
-                    uc.iter().for_each(|a| {
-                        let state = parent_ref.state.perform_action_copy(&a);
-                        children.insert(
-                            a.clone(),
-                            Rc::new(MctsNode::create_child(state, Rc::downgrade(&parent_ref))),
-                        );
-                    });
-                }
-                drop(uc);
-                parent_ref.unvisited_actions.borrow_mut().clear();
-            }
             pub fn backpropagate(&self, result: &R) {
                 self.visits.set(self.visits.get() + 1_f64);
                 self.wins.set(
                     self.wins.get() +
-                        self.state.next_player().reward(result),
+                        self.state.current_player().reward(result),
                 );
-                match &self.parent.upgrade() {
-                    Some(parent_node) => parent_node.backpropagate(result),
-                    None => (),
+                if let Some(parent) = self.parent.upgrade() {
+                    parent.backpropagate(result);
                 }
             }
         }
@@ -562,8 +561,8 @@ pub mod mcts {
     pub mod tree {
         use std::cell::RefCell;
         use std::rc::Rc;
-        use std::time;
-        use rand::rngs::ThreadRng;
+        use std::time::{self, Instant};
+        use super::cg_rand::Rng;
         use super::traits::*;
         use super::node::MctsNode;
         pub struct MctsTree<P, S, R, A>
@@ -584,16 +583,22 @@ pub mod mcts {
         {
             pub fn new(state: S) -> Self {
                 let node_ref = Rc::new(MctsNode::new(state));
-                MctsNode::select(Rc::clone(&node_ref));
                 MctsTree { root: RefCell::new(node_ref) }
             }
-            pub fn expand_tree(&self, run_time_nano: u32, rng: &mut ThreadRng) {
-                let begin = time::Instant::now();
+            pub fn best_child(&self) -> Rc<MctsNode<P, S, R, A>> {
+                self.root.borrow().best_child()
+            }
+            pub fn expand_tree(
+                &self,
+                begin: Instant,
+                duration: time::Duration,
+                rng: &mut Box<Rng>,
+                depth: usize,
+            ) {
                 let mut count = 0_u32;
-                let duration = time::Duration::new(0, run_time_nano);
                 let root_ref = Rc::clone(&self.root.borrow());
                 while begin.elapsed() < duration {
-                    let selected = MctsNode::select(Rc::clone(&root_ref));
+                    let selected = MctsNode::select(Rc::clone(&root_ref), depth);
                     let end_state = selected.state.clone();
                     if end_state.playable() {
                         let result = end_state.simulate_game(rng);
@@ -606,15 +611,14 @@ pub mod mcts {
                 eprintln!("{}", count);
             }
             pub fn move_down(&self, action: A) {
-                MctsNode::expand(Rc::clone(&self.root.borrow()));
                 let child: Rc<MctsNode<P, S, R, A>> =
-                    Rc::clone(self.root.borrow().children.borrow().get(&action).unwrap());
+                    Rc::clone(&self.root.borrow().children.borrow().get(&action).unwrap());
                 self.root.replace(child);
             }
         }
     }
     pub mod traits {
-        use rand::rngs::ThreadRng;
+        use super::cg_rand::Rng;
         pub trait GameResult {}
         pub trait GameAction: Eq + Clone + std::hash::Hash {}
         pub trait GamePlayer<R: GameResult> {
@@ -631,31 +635,316 @@ pub mod mcts {
             fn last_action(&self) -> Option<A>;
             fn possible_actions(&self) -> Vec<A>;
             fn perform_action_copy(&self, action: &A) -> Self;
-            fn simulate_game(self, rng: &mut ThreadRng) -> R;
+            fn simulate_game(self, rng: &mut Box<Rng>) -> R;
             fn outcome(&self) -> R;
             fn playable(&self) -> bool;
         }
     }
+    pub use super::*;
 }
-extern crate rand ;
+pub mod cg_rand {
+    extern crate alloc ;
+    use core::ops::Bound;
+    use core::ops::RangeBounds;
+    mod global_rng {
+        use super::cg_rand::Rng;
+        use std::cell::Cell;
+        use std::ops::RangeBounds;
+        const DEFAULT_RNG_SEED: u64 = 0xef6f79ed30ba75a;
+        impl Default for Rng {
+            #[inline]
+            fn default() -> Rng {
+                Rng::new()
+            }
+        }
+        impl Rng {
+            #[inline]
+            pub fn new() -> Rng {
+                try_with_rng(Rng::fork).unwrap_or_else(|_| Rng::with_seed(0x4d595df4d0f33173))
+            }
+        }
+        thread_local ! { static RNG : Cell < Rng > = Cell :: new ( Rng ( random_seed ( ) . unwrap_or ( DEFAULT_RNG_SEED ) ) ) ; }
+        #[inline]
+        fn with_rng<R>(f: impl FnOnce(&mut Rng) -> R) -> R {
+            RNG.with(|rng| {
+                let current = rng.replace(Rng(0));
+                let mut restore = RestoreOnDrop { rng, current };
+                f(&mut restore.current)
+            })
+        }
+        #[inline]
+        fn try_with_rng<R>(f: impl FnOnce(&mut Rng) -> R) -> Result<R, std::thread::AccessError> {
+            RNG.try_with(|rng| {
+                let current = rng.replace(Rng(0));
+                let mut restore = RestoreOnDrop { rng, current };
+                f(&mut restore.current)
+            })
+        }
+        struct RestoreOnDrop<'a> {
+            rng: &'a Cell<Rng>,
+            current: Rng,
+        }
+        impl Drop for RestoreOnDrop<'_> {
+            fn drop(&mut self) {
+                self.rng.set(Rng(self.current.0));
+            }
+        }
+        #[inline]
+        pub fn seed(seed: u64) {
+            with_rng(|r| r.seed(seed));
+        }
+        #[inline]
+        pub fn get_seed() -> u64 {
+            with_rng(|r| r.get_seed())
+        }
+        #[inline]
+        pub fn choice<I>(iter: I) -> Option<I::Item>
+        where
+            I: IntoIterator,
+            I::IntoIter: ExactSizeIterator,
+        {
+            with_rng(|r| r.choice(iter))
+        }
+        #[inline]
+        pub fn usize(range: impl RangeBounds<usize>) -> usize {
+            with_rng(|r| r.usize(range))
+        }
+        fn random_seed() -> Option<u64> {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            use std::thread;
+            use std::time::Instant;
+            let mut hasher = DefaultHasher::new();
+            Instant::now().hash(&mut hasher);
+            thread::current().id().hash(&mut hasher);
+            let hash = hasher.finish();
+            Some((hash << 1) | 1)
+        }
+    }
+    pub use super::*;
+    pub use global_rng::*;
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct Rng(u64);
+    impl Clone for Rng {
+        fn clone(&self) -> Rng {
+            Rng::with_seed(self.0)
+        }
+    }
+    impl Rng {
+        #[inline]
+        #[cfg(target_pointer_width = "32")]
+        fn gen_u32(&mut self) -> u32 {
+            self.gen_u64() as u32
+        }
+        #[inline]
+        fn gen_u64(&mut self) -> u64 {
+            let s = self.0.wrapping_add(0xA0761D6478BD642F);
+            self.0 = s;
+            let t = u128::from(s) * u128::from(s ^ 0xE7037ED1A0B428DB);
+            (t as u64) ^ (t >> 64) as u64
+        }
+        #[inline]
+        #[cfg(target_pointer_width = "128")]
+        fn gen_u128(&mut self) -> u128 {
+            (u128::from(self.gen_u64()) << 64) | u128::from(self.gen_u64())
+        }
+        #[inline]
+        #[cfg(target_pointer_width = "32")]
+        fn gen_mod_u32(&mut self, n: u32) -> u32 {
+            let mut r = self.gen_u32();
+            let mut hi = mul_high_u32(r, n);
+            let mut lo = r.wrapping_mul(n);
+            if lo < n {
+                let t = n.wrapping_neg() % n;
+                while lo < t {
+                    r = self.gen_u32();
+                    hi = mul_high_u32(r, n);
+                    lo = r.wrapping_mul(n);
+                }
+            }
+            hi
+        }
+        #[inline]
+        fn gen_mod_u64(&mut self, n: u64) -> u64 {
+            let mut r = self.gen_u64();
+            let mut hi = mul_high_u64(r, n);
+            let mut lo = r.wrapping_mul(n);
+            if lo < n {
+                let t = n.wrapping_neg() % n;
+                while lo < t {
+                    r = self.gen_u64();
+                    hi = mul_high_u64(r, n);
+                    lo = r.wrapping_mul(n);
+                }
+            }
+            hi
+        }
+        #[inline]
+        #[cfg(target_pointer_width = "128")]
+        fn gen_mod_u128(&mut self, n: u128) -> u128 {
+            let mut r = self.gen_u128();
+            let mut hi = mul_high_u128(r, n);
+            let mut lo = r.wrapping_mul(n);
+            if lo < n {
+                let t = n.wrapping_neg() % n;
+                while lo < t {
+                    r = self.gen_u128();
+                    hi = mul_high_u128(r, n);
+                    lo = r.wrapping_mul(n);
+                }
+            }
+            hi
+        }
+    }
+    #[inline]
+    #[cfg(target_pointer_width = "32")]
+    fn mul_high_u32(a: u32, b: u32) -> u32 {
+        (((a as u64) * (b as u64)) >> 32) as u32
+    }
+    #[inline]
+    fn mul_high_u64(a: u64, b: u64) -> u64 {
+        (((a as u128) * (b as u128)) >> 64) as u64
+    }
+    #[inline]
+    #[cfg(target_pointer_width = "128")]
+    fn mul_high_u128(a: u128, b: u128) -> u128 {
+        let a_lo = a as u64 as u128;
+        let a_hi = (a >> 64) as u64 as u128;
+        let b_lo = b as u64 as u128;
+        let b_hi = (b >> 64) as u64 as u128;
+        let carry = (a_lo * b_lo) >> 64;
+        let carry = ((a_hi * b_lo) as u64 as u128 + (a_lo * b_hi) as u64 as u128 + carry) >> 64;
+        a_hi * b_hi + ((a_hi * b_lo) >> 64) + ((a_lo * b_hi) >> 64) + carry
+    }
+    macro_rules ! rng_integer { ( $ t : tt , $ unsigned_t : tt , $ gen : tt , $ mod : tt , $ doc : tt ) => { # [ doc = $ doc ] # [ inline ] pub fn $ t ( & mut self , range : impl RangeBounds <$ t > ) -> $ t { let panic_empty_range = || { panic ! ( "empty range: {:?}..{:?}" , range . start_bound ( ) , range . end_bound ( ) ) } ; let low = match range . start_bound ( ) { Bound :: Unbounded => core ::$ t :: MIN , Bound :: Included ( & x ) => x , Bound :: Excluded ( & x ) => x . checked_add ( 1 ) . unwrap_or_else ( panic_empty_range ) , } ; let high = match range . end_bound ( ) { Bound :: Unbounded => core ::$ t :: MAX , Bound :: Included ( & x ) => x , Bound :: Excluded ( & x ) => x . checked_sub ( 1 ) . unwrap_or_else ( panic_empty_range ) , } ; if low > high { panic_empty_range ( ) ; } if low == core ::$ t :: MIN && high == core ::$ t :: MAX { self .$ gen ( ) as $ t } else { let len = high . wrapping_sub ( low ) . wrapping_add ( 1 ) ; low . wrapping_add ( self .$ mod ( len as $ unsigned_t as _ ) as $ t ) } } } ; }
+    impl Rng {
+        #[inline]
+        #[must_use = "this creates a new instance of `Rng`; if you want to initialize the thread-local generator, use `fastrand::seed()` instead"]
+        pub fn with_seed(seed: u64) -> Self {
+            let mut rng = Rng(0);
+            rng.seed(seed);
+            rng
+        }
+        #[inline]
+        #[must_use = "this creates a new instance of `Rng`"]
+        pub fn fork(&mut self) -> Self {
+            Rng::with_seed(self.gen_u64())
+        }
+        #[inline]
+        pub fn seed(&mut self, seed: u64) {
+            self.0 = seed;
+        }
+        #[inline]
+        pub fn get_seed(&self) -> u64 {
+            self.0
+        }
+        #[inline]
+        pub fn choice<I>(&mut self, iter: I) -> Option<I::Item>
+        where
+            I: IntoIterator,
+            I::IntoIter: ExactSizeIterator,
+        {
+            let mut iter = iter.into_iter();
+            let len = iter.len();
+            if len == 0 {
+                return None;
+            }
+            let index = self.usize(0..len);
+            iter.nth(index)
+        }
+        #[cfg(target_pointer_width = "32")]
+        rng_integer!(
+            usize,
+            usize,
+            gen_u32,
+            gen_mod_u32,
+            "Generates a random `usize` in the given range."
+        );
+        #[cfg(target_pointer_width = "64")]
+        rng_integer!(
+            usize,
+            usize,
+            gen_u64,
+            gen_mod_u64,
+            "Generates a random `usize` in the given range."
+        );
+        #[cfg(target_pointer_width = "128")]
+        rng_integer!(
+            usize,
+            usize,
+            gen_u128,
+            gen_mod_u128,
+            "Generates a random `usize` in the given range."
+        );
+    }
+}
 use std::io;
+use std::rc::Rc;
+use std::time;
 use game::game_action::Action;
 use game::game_state::State;
 use game::masks::LOCAL_MOVES;
 use mcts::tree::MctsTree;
+use cg_rand::Rng;
+use mcts::traits::GameState;
+use mcts::node::MctsNode;
 fn main() {
     codingame();
 }
+fn perf_test() {
+    let mut rng = Box::new(cg_rand::Rng::new());
+    let mut game = State::default();
+    let mcts = MctsTree::new(game);
+    let mut action = Action::from_coords(4, LOCAL_MOVES[4]);
+    let root_ref = mcts.root.borrow();
+    let state = root_ref.state.perform_action_copy(&action);
+    let next = Rc::new(MctsNode::create_child(state, Rc::downgrade(&root_ref)));
+    drop(root_ref);
+    mcts.root.replace(next);
+    let first_turn_begin = time::Instant::now();
+    let first_duration = time::Duration::new(0, 999999995);
+    mcts.expand_tree(first_turn_begin, first_duration, &mut rng, 81);
+    println!("4 4");
+    let duration = time::Duration::new(0, 99000000);
+    loop {
+        let begin = time::Instant::now();
+        mcts.expand_tree(begin, duration, &mut rng, 5);
+        let child = mcts.best_child();
+        game = child.state.clone();
+        action = game.last_action.unwrap();
+        mcts.root.replace(child);
+        action.print();
+        if !game.playable() {
+            println!("{:?}", game.outcome());
+            return;
+        }
+        let opp = mcts.best_child();
+        game = opp.state.clone();
+        action = game.last_action.unwrap();
+        mcts.root.replace(opp);
+        action.print();
+        if !game.playable() {
+            println!("{:?}", game.outcome());
+            return;
+        }
+    }
+}
 fn codingame() {
-    let mut rng = rand::thread_rng();
+    let mut rng: Box<Rng> = Box::new(cg_rand::Rng::new());
     let inputs = read_input();
     let game = State::default();
     let mcts = MctsTree::new(game);
     let mut action: Action;
+    let first_turn_begin = time::Instant::now();
+    let first_duration = time::Duration::new(0, 999999900);
     if inputs.0 < 0 {
         action = Action::from_coords(4, LOCAL_MOVES[4]);
-        mcts.move_down(action);
-        mcts.expand_tree(999999995, &mut rng);
+        let root_ref = mcts.root.borrow();
+        let state = root_ref.state.perform_action_copy(&action);
+        let next = Rc::new(MctsNode::create_child(state, Rc::downgrade(&root_ref)));
+        drop(root_ref);
+        mcts.root.replace(next);
+        mcts.expand_tree(first_turn_begin, first_duration, &mut rng, 10);
         println!("4 4");
     } else {
         let opponent_row = inputs.0;
@@ -664,14 +953,20 @@ fn codingame() {
             (opponent_col / 3 + (opponent_row / 3) * 3) as usize,
             LOCAL_MOVES[(opponent_col % 3 + (opponent_row % 3) * 3) as usize],
         );
-        mcts.move_down(action);
-        mcts.expand_tree(999999995, &mut rng);
+        let root_ref = mcts.root.borrow();
+        let state = root_ref.state.perform_action_copy(&action);
+        let next = Rc::new(MctsNode::create_child(state, Rc::downgrade(&root_ref)));
+        drop(root_ref);
+        mcts.root.replace(next);
+        mcts.expand_tree(first_turn_begin, first_duration, &mut rng, 10);
         let child = mcts.root.borrow().best_child();
         action = child.state.last_action.unwrap();
         mcts.root.replace(child);
         action.print();
     }
+    let turn_duration = time::Duration::new(0, 99999900);
     loop {
+        let begin = time::Instant::now();
         let inputs = read_input();
         let opponent_row = inputs.0;
         let opponent_col = inputs.1;
@@ -680,8 +975,8 @@ fn codingame() {
             LOCAL_MOVES[(opponent_col % 3 + (opponent_row % 3) * 3) as usize],
         );
         mcts.move_down(opp_move);
-        mcts.expand_tree(99999995, &mut rng);
-        let child = mcts.root.borrow().best_child();
+        mcts.expand_tree(begin, turn_duration, &mut rng, 10);
+        let child = mcts.best_child();
         action = child.state.last_action.unwrap();
         mcts.root.replace(child);
         action.print();

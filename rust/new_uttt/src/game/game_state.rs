@@ -1,7 +1,4 @@
-
-
-use rand::rngs::ThreadRng;
-use rand::seq::IteratorRandom;
+use super::cg_rand::Rng;
 
 use super::masks::local_to_global;
 
@@ -9,10 +6,10 @@ use super::mcts::traits::GameState;
 
 use super::mcts::traits::GameResult;
 
-use super::player::Player;
-use super::local_board::LocalBoards;
-use super::global_board::GlobalBoard;
 use super::game_action::Action;
+use super::global_board::GlobalBoard;
+use super::local_board::LocalBoards;
+use super::player::Player;
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum UTTTResult {
@@ -50,13 +47,13 @@ impl GameState<Player, UTTTResult, Action> for State {
     }
 
     fn last_action(&self) -> Option<Action> {
-       self.last_action
+        self.last_action
     }
 
     fn outcome(&self) -> UTTTResult {
         self.result
     }
-    
+
     fn playable(&self) -> bool {
         self.result == UTTTResult::InPlay
     }
@@ -100,12 +97,15 @@ impl GameState<Player, UTTTResult, Action> for State {
     }
 
     fn perform_action_copy(&self, action: &Action) -> Self {
-        let mut new_state = self.clone();        
-        
-        let board_state = new_state.local_boards.set(action.global(), action.local(), new_state.player);
+        let mut new_state = self.clone();
+        new_state.player = new_state.player.other();
+
+        let board_state =
+            new_state
+                .local_boards
+                .set(action.global(), action.local(), new_state.player);
 
         new_state.result = new_state.global_states.set(action.global(), board_state);
-        new_state.player = new_state.player.other();
         new_state.last_action = Some(*action);
         new_state.last_local_move = Some(action.local());
 
@@ -113,26 +113,27 @@ impl GameState<Player, UTTTResult, Action> for State {
     }
 
     //#[inline]
-    fn simulate_game(mut self, rng: &mut ThreadRng) -> UTTTResult {
+    fn simulate_game(mut self, rng: &mut Box<Rng>) -> UTTTResult {
         loop {
             let action = self.random_move(rng);
 
             match action {
                 Some(action) => {
-                    let board_state = self.local_boards.set(action.global(), action.local(), self.player);
+                    self.player = self.player.other();
+                    
+                    let board_state =
+                        self.local_boards
+                            .set(action.global(), action.local(), self.player);
 
                     self.result = self.global_states.set(action.global(), board_state);
-                    self.player = self.player.other();
                     self.last_local_move = Some(action.local());
-        
-                    if self.result != UTTTResult::InPlay{
+
+                    if self.result != UTTTResult::InPlay {
                         return self.result;
                     }
-                },
-                None => return UTTTResult::Drawn
+                }
+                None => return UTTTResult::Drawn,
             }
-
-            
         }
     }
 }
@@ -148,31 +149,21 @@ impl State {
             global_states: Default::default(),
             result: UTTTResult::InPlay,
         }
-    }    
+    }
 
     //#[inline]
-    pub fn random_move(&self, rng: &mut ThreadRng) -> Option<Action> {
+    pub fn random_move(&self, rng: &mut Box<Rng>) -> Option<Action> {
         let global = local_to_global(self.last_local_move.unwrap());
         if self.global_states.in_play(global) {
-            self.local_boards
-                .local_moves(global)
-                .iter()
-                .choose(rng)
+            rng.choice(self.local_boards.local_moves(global).iter())
                 .map(|&local| Action::from_coords(global, local))
         } else {
-            self.global_states
-                .playable_boards
-                .iter()
-                .choose(rng)
+            rng.choice(self.global_states.playable_boards.iter())
                 .map(|&global| {
-                    self.local_boards
-                        .local_moves(global)
-                        .iter()
-                        .choose(rng)
+                    rng.choice(self.local_boards.local_moves(global).iter())
                         .map(|&local| Action::from_coords(global, local))
                         .unwrap()
                 })
         }
     }
 }
-

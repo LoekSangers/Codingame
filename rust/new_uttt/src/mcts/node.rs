@@ -6,7 +6,7 @@ use std::rc::Weak;
 
 use super::traits::*;
 
-pub const C: f64 = 1.414_f64;
+pub const C: f64 = 0.6_f64;
 
 pub struct MctsNode<P, S, R, A>
 where
@@ -21,9 +21,10 @@ where
     pub children: RefCell<HashMap<A, Rc<MctsNode<P, S, R, A>>>>,
 
     unvisited_actions: RefCell<Vec<A>>,
+    expanded: Cell<bool>,
 
-    wins: Cell<f64>,
-    visits: Cell<f64>,
+    pub wins: Cell<f64>,
+    pub visits: Cell<f64>,
 }
 
 impl<P, S, R, A> MctsNode<P, S, R, A>
@@ -41,6 +42,7 @@ where
             children: RefCell::new(HashMap::new()),
             wins: Cell::new(0.),
             visits: Cell::new(1.),
+            expanded: Cell::new(false),
         }
     }
 
@@ -52,11 +54,8 @@ where
             children: RefCell::new(HashMap::new()),
             wins: Cell::new(0_f64),
             visits: Cell::new(1_f64),
+            expanded: Cell::new(false),
         }
-    }
-
-    pub fn uct(&self, visits: f64) -> f64 {
-        self.wins.get() / self.visits.get() + C * (visits / self.visits.get())
     }
 
     pub fn best_child(&self) -> Rc<MctsNode<P, S, R, A>> {
@@ -65,6 +64,7 @@ where
             let best = children
                 .values()
                 .reduce(|acc, node| {
+                    // eprintln!("{} / {} = {}", node.wins.get(), node.visits.get(), node.wins.get()/ node.visits.get());
                     if acc.wins.get() / acc.visits.get() > node.wins.get() / node.visits.get() {
                         acc
                     } else {
@@ -79,15 +79,20 @@ where
         }
     }
 
-    pub fn select(self_ref: Rc<MctsNode<P, S, R, A>>) -> Rc<MctsNode<P, S, R, A>> {
+    pub fn uct(&self, visits: f64) -> f64 {
+        self.wins.get() / self.visits.get() + C * (visits / self.visits.get())
+    }
+
+    pub fn select(self_ref: Rc<MctsNode<P, S, R, A>>, depth: usize) -> Rc<MctsNode<P, S, R, A>> {
+        if depth == 0 {
+            return self_ref;
+        }
         let uc = self_ref.unvisited_actions.borrow();
         let children = self_ref.children.borrow();
-        if uc.is_empty() && !children.is_empty() {
-            let visits = match self_ref.parent.upgrade() {
-                Some(parent_node) => parent_node.visits.get().ln(),
-                None => self_ref.visits.get().ln(),
-            };
-            self_ref
+        let fully_expanded = self_ref.expanded.get();
+        if fully_expanded && !children.is_empty(){    
+            let visits =  self_ref.visits.get().ln();       
+            let selection = self_ref
                 .children
                 .borrow()
                 .values()
@@ -99,14 +104,35 @@ where
                     }
                 })
                 .unwrap()
-                .clone()
-        } else if children.is_empty() {
+                .clone();
+            MctsNode::select(selection, depth - 1)
+        } else if !fully_expanded {//expand the node with one option
             drop(uc);
             drop(children);
-            Self::expand(Rc::clone(&self_ref));
-            let children = self_ref.children.borrow();
+            
+            let mut unvisited_actions = self_ref.unvisited_actions.borrow_mut();
+            let next_action = unvisited_actions.pop();
+            drop(unvisited_actions);
 
-            children.values().next().unwrap().clone()
+            match next_action {
+                Some(action) => {
+                    let mut children = self_ref.children.borrow_mut();
+                    let state = self_ref.state.perform_action_copy(&action);
+
+                    let child = Rc::new(MctsNode::create_child(state, Rc::downgrade(&self_ref)));
+
+                    children.insert(
+                        action.clone(),
+                        Rc::clone(&child),
+                    );
+
+                    child
+                }
+                None => {
+                    self_ref.expanded.set(true);
+                    MctsNode::select(self_ref, depth - 1)
+                }
+            }        
         } else {
             drop(uc);
             drop(children);
@@ -114,31 +140,13 @@ where
         }
     }
 
-    pub fn expand(parent_ref: Rc<MctsNode<P, S, R, A>>) {
-        let uc = parent_ref.unvisited_actions.borrow();
-        let mut children = parent_ref.children.borrow_mut();
-        if !uc.is_empty() {
-            uc.iter().for_each(|a| {
-                let state = parent_ref.state.perform_action_copy(&a);
-
-                children.insert(
-                    a.clone(),
-                    Rc::new(MctsNode::create_child(state, Rc::downgrade(&parent_ref))),
-                );
-            });
-        }
-        drop(uc);
-
-        parent_ref.unvisited_actions.borrow_mut().clear();
-    }
-
     pub fn backpropagate(&self, result: &R) {
         self.visits.set(self.visits.get() + 1_f64);
         self.wins
-            .set(self.wins.get() + self.state.next_player().reward(result));
-        match &self.parent.upgrade() {
-            Some(parent_node) => parent_node.backpropagate(result),
-            None => (),
+            .set(self.wins.get() + self.state.current_player().reward(result));
+        if let Some(parent) = self.parent.upgrade() {
+            parent.backpropagate(result);
         }
+        
     }
 }
