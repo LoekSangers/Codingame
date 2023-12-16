@@ -6,7 +6,7 @@ use std::rc::Weak;
 
 use super::traits::*;
 
-pub const C: f64 = 0.6_f64;
+pub const C: f64 = 1_f64;
 
 pub struct MctsNode<P, S, R, A>
 where
@@ -25,6 +25,8 @@ where
 
     pub wins: Cell<f64>,
     pub visits: Cell<f64>,
+    
+    pub uct: Cell<f64>,
 }
 
 impl<P, S, R, A> MctsNode<P, S, R, A>
@@ -42,6 +44,7 @@ where
             children: RefCell::new(HashMap::new()),
             wins: Cell::new(0.),
             visits: Cell::new(1.),
+            uct: Cell::new(0.),
             expanded: Cell::new(false),
         }
     }
@@ -52,8 +55,9 @@ where
             state,
             parent,
             children: RefCell::new(HashMap::new()),
-            wins: Cell::new(0_f64),
-            visits: Cell::new(1_f64),
+            wins: Cell::new(0.),
+            visits: Cell::new(1.),
+            uct: Cell::new(0.),
             expanded: Cell::new(false),
         }
     }
@@ -64,7 +68,7 @@ where
             let best = children
                 .values()
                 .reduce(|acc, node| {
-                    // eprintln!("{} / {} = {}", node.wins.get(), node.visits.get(), node.wins.get()/ node.visits.get());
+                    eprintln!("{} / {} = {}", node.wins.get(), node.visits.get(), node.wins.get()/ node.visits.get());
                     if acc.wins.get() / acc.visits.get() > node.wins.get() / node.visits.get() {
                         acc
                     } else {
@@ -80,24 +84,21 @@ where
     }
 
     pub fn uct(&self, visits: f64) -> f64 {
-        self.wins.get() / self.visits.get() + C * (visits / self.visits.get())
+        self.wins.get() / self.visits.get() - C * (self.visits.get() / visits)
     }
 
-    pub fn select(self_ref: Rc<MctsNode<P, S, R, A>>, depth: usize) -> Rc<MctsNode<P, S, R, A>> {
-        if depth == 0 {
-            return self_ref;
-        }
+    pub fn select(self_ref: Rc<MctsNode<P, S, R, A>>) -> Rc<MctsNode<P, S, R, A>> {
+
         let uc = self_ref.unvisited_actions.borrow();
         let children = self_ref.children.borrow();
         let fully_expanded = self_ref.expanded.get();
-        if fully_expanded && !children.is_empty(){    
-            let visits =  self_ref.visits.get().ln();       
+        if fully_expanded && !children.is_empty(){       
             let selection = self_ref
                 .children
                 .borrow()
                 .values()
                 .reduce(|acc, node| {
-                    if acc.uct(visits) > node.uct(visits) {
+                    if acc.uct.get() > node.uct.get() {
                         acc
                     } else {
                         node
@@ -105,7 +106,7 @@ where
                 })
                 .unwrap()
                 .clone();
-            MctsNode::select(selection, depth - 1)
+            MctsNode::select(selection)
         } else if !fully_expanded {//expand the node with one option
             drop(uc);
             drop(children);
@@ -130,7 +131,7 @@ where
                 }
                 None => {
                     self_ref.expanded.set(true);
-                    MctsNode::select(self_ref, depth - 1)
+                    MctsNode::select(self_ref)
                 }
             }        
         } else {
@@ -146,6 +147,8 @@ where
             .set(self.wins.get() + self.state.current_player().reward(result));
         if let Some(parent) = self.parent.upgrade() {
             parent.backpropagate(result);
+            
+            self.uct.set(self.uct(parent.visits.get() / parent.children.borrow().len() as f64))   
         }
         
     }

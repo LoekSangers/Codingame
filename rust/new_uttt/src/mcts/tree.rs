@@ -35,12 +35,12 @@ where
         self.root.borrow().best_child()
     }
 
-    pub fn expand_tree(&self, begin: Instant, duration: time::Duration, rng: &mut Box<Rng>, depth: usize) {
+    pub fn expand_tree(&self, begin: Instant, duration: time::Duration, rng: &mut Box<Rng>) {
         let mut count = 0_u32;
 
         let root_ref = Rc::clone(&self.root.borrow());
         while begin.elapsed() < duration {
-            let selected = MctsNode::select(Rc::clone(&root_ref), depth);
+            let selected = MctsNode::select(Rc::clone(&root_ref));
             let end_state = selected.state.clone();
             if end_state.playable() {
                 let result = end_state.simulate_game(rng);

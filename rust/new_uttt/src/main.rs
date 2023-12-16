@@ -35,14 +35,14 @@ fn perf_test() {
 
     let first_turn_begin = time::Instant::now();
     let first_duration = time::Duration::new(0, 999999995);
-    mcts.expand_tree(first_turn_begin, first_duration, &mut rng, 81);
+    mcts.expand_tree(first_turn_begin, first_duration, &mut rng);
     println!("4 4");
 
     let duration = time::Duration::new(0, 99000000);
     // game loop
     loop {
         let begin = time::Instant::now();
-        mcts.expand_tree(begin, duration, &mut rng, 5);
+        mcts.expand_tree(begin, duration, &mut rng);
 
         let child = mcts.best_child();
 
@@ -82,7 +82,7 @@ fn codingame() {
     let mut action: Action;
 
     let first_turn_begin = time::Instant::now();
-    let first_duration = time::Duration::new(0, 999999900);
+    let first_duration = time::Duration::new(0, 999999995);
     if inputs.0 < 0 {
         action = Action::from_coords(4, LOCAL_MOVES[4]);
 
@@ -92,7 +92,7 @@ fn codingame() {
         drop(root_ref);   
         mcts.root.replace(next);
 
-        mcts.expand_tree(first_turn_begin, first_duration, &mut rng, 10);
+        mcts.expand_tree(first_turn_begin, first_duration, &mut rng);
         println!("4 4");
     } else {
         let opponent_row = inputs.0;
@@ -109,7 +109,7 @@ fn codingame() {
         drop(root_ref);   
         mcts.root.replace(next);
 
-        mcts.expand_tree(first_turn_begin, first_duration, &mut rng, 10);
+        mcts.expand_tree(first_turn_begin, first_duration, &mut rng);
 
         let child = mcts.root.borrow().best_child();
         action = child.state.last_action.unwrap();
@@ -131,7 +131,7 @@ fn codingame() {
         );
 
         mcts.move_down(opp_move);
-        mcts.expand_tree(begin, turn_duration, &mut rng, 10);
+        mcts.expand_tree(begin, turn_duration, &mut rng);
 
         let child = mcts.best_child();
         action = child.state.last_action.unwrap();

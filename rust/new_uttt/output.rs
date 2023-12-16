@@ -429,7 +429,7 @@ pub mod mcts {
         use std::rc::Rc;
         use std::rc::Weak;
         use super::traits::*;
-        pub const C: f64 = 0.6_f64;
+        pub const C: f64 = 1_f64;
         pub struct MctsNode<P, S, R, A>
         where
             P: GamePlayer<R>,
@@ -444,6 +444,7 @@ pub mod mcts {
             expanded: Cell<bool>,
             pub wins: Cell<f64>,
             pub visits: Cell<f64>,
+            pub uct: Cell<f64>,
         }
         impl<P, S, R, A> MctsNode<P, S, R, A>
         where
@@ -460,6 +461,7 @@ pub mod mcts {
                     children: RefCell::new(HashMap::new()),
                     wins: Cell::new(0.),
                     visits: Cell::new(1.),
+                    uct: Cell::new(0.),
                     expanded: Cell::new(false),
                 }
             }
@@ -469,8 +471,9 @@ pub mod mcts {
                     state,
                     parent,
                     children: RefCell::new(HashMap::new()),
-                    wins: Cell::new(0_f64),
-                    visits: Cell::new(1_f64),
+                    wins: Cell::new(0.),
+                    visits: Cell::new(1.),
+                    uct: Cell::new(0.),
                     expanded: Cell::new(false),
                 }
             }
@@ -479,12 +482,20 @@ pub mod mcts {
                 if !children.is_empty() {
                     let best = children
                         .values()
-                        .reduce(|acc, node| if acc.wins.get() / acc.visits.get() >
-                            node.wins.get() / node.visits.get()
-                        {
-                            acc
-                        } else {
-                            node
+                        .reduce(|acc, node| {
+                            eprintln!(
+                                "{} / {} = {}",
+                                node.wins.get(),
+                                node.visits.get(),
+                                node.wins.get() / node.visits.get()
+                            );
+                            if acc.wins.get() / acc.visits.get() >
+                                node.wins.get() / node.visits.get()
+                            {
+                                acc
+                            } else {
+                                node
+                            }
                         })
                         .unwrap()
                         .clone();
@@ -494,32 +505,25 @@ pub mod mcts {
                 }
             }
             pub fn uct(&self, visits: f64) -> f64 {
-                self.wins.get() / self.visits.get() + C * (visits / self.visits.get())
+                self.wins.get() / self.visits.get() - C * (self.visits.get() / visits)
             }
-            pub fn select(
-                self_ref: Rc<MctsNode<P, S, R, A>>,
-                depth: usize,
-            ) -> Rc<MctsNode<P, S, R, A>> {
-                if depth == 0 {
-                    return self_ref;
-                }
+            pub fn select(self_ref: Rc<MctsNode<P, S, R, A>>) -> Rc<MctsNode<P, S, R, A>> {
                 let uc = self_ref.unvisited_actions.borrow();
                 let children = self_ref.children.borrow();
                 let fully_expanded = self_ref.expanded.get();
                 if fully_expanded && !children.is_empty() {
-                    let visits = self_ref.visits.get().ln();
                     let selection = self_ref
                         .children
                         .borrow()
                         .values()
-                        .reduce(|acc, node| if acc.uct(visits) > node.uct(visits) {
+                        .reduce(|acc, node| if acc.uct.get() > node.uct.get() {
                             acc
                         } else {
                             node
                         })
                         .unwrap()
                         .clone();
-                    MctsNode::select(selection, depth - 1)
+                    MctsNode::select(selection)
                 } else if !fully_expanded {
                     drop(uc);
                     drop(children);
@@ -537,7 +541,7 @@ pub mod mcts {
                         }
                         None => {
                             self_ref.expanded.set(true);
-                            MctsNode::select(self_ref, depth - 1)
+                            MctsNode::select(self_ref)
                         }
                     }
                 } else {
@@ -554,6 +558,10 @@ pub mod mcts {
                 );
                 if let Some(parent) = self.parent.upgrade() {
                     parent.backpropagate(result);
+                    self.uct.set(self.uct(
+                        parent.visits.get() /
+                            parent.children.borrow().len() as f64,
+                    ))
                 }
             }
         }
@@ -593,12 +601,11 @@ pub mod mcts {
                 begin: Instant,
                 duration: time::Duration,
                 rng: &mut Box<Rng>,
-                depth: usize,
             ) {
                 let mut count = 0_u32;
                 let root_ref = Rc::clone(&self.root.borrow());
                 while begin.elapsed() < duration {
-                    let selected = MctsNode::select(Rc::clone(&root_ref), depth);
+                    let selected = MctsNode::select(Rc::clone(&root_ref));
                     let end_state = selected.state.clone();
                     if end_state.playable() {
                         let result = end_state.simulate_game(rng);
@@ -903,12 +910,12 @@ fn perf_test() {
     mcts.root.replace(next);
     let first_turn_begin = time::Instant::now();
     let first_duration = time::Duration::new(0, 999999995);
-    mcts.expand_tree(first_turn_begin, first_duration, &mut rng, 81);
+    mcts.expand_tree(first_turn_begin, first_duration, &mut rng);
     println!("4 4");
     let duration = time::Duration::new(0, 99000000);
     loop {
         let begin = time::Instant::now();
-        mcts.expand_tree(begin, duration, &mut rng, 5);
+        mcts.expand_tree(begin, duration, &mut rng);
         let child = mcts.best_child();
         game = child.state.clone();
         action = game.last_action.unwrap();
@@ -936,7 +943,7 @@ fn codingame() {
     let mcts = MctsTree::new(game);
     let mut action: Action;
     let first_turn_begin = time::Instant::now();
-    let first_duration = time::Duration::new(0, 999999900);
+    let first_duration = time::Duration::new(0, 999999995);
     if inputs.0 < 0 {
         action = Action::from_coords(4, LOCAL_MOVES[4]);
         let root_ref = mcts.root.borrow();
@@ -944,7 +951,7 @@ fn codingame() {
         let next = Rc::new(MctsNode::create_child(state, Rc::downgrade(&root_ref)));
         drop(root_ref);
         mcts.root.replace(next);
-        mcts.expand_tree(first_turn_begin, first_duration, &mut rng, 10);
+        mcts.expand_tree(first_turn_begin, first_duration, &mut rng);
         println!("4 4");
     } else {
         let opponent_row = inputs.0;
@@ -958,13 +965,13 @@ fn codingame() {
         let next = Rc::new(MctsNode::create_child(state, Rc::downgrade(&root_ref)));
         drop(root_ref);
         mcts.root.replace(next);
-        mcts.expand_tree(first_turn_begin, first_duration, &mut rng, 10);
+        mcts.expand_tree(first_turn_begin, first_duration, &mut rng);
         let child = mcts.root.borrow().best_child();
         action = child.state.last_action.unwrap();
         mcts.root.replace(child);
         action.print();
     }
-    let turn_duration = time::Duration::new(0, 99999900);
+    let turn_duration = time::Duration::new(0, 99999995);
     loop {
         let begin = time::Instant::now();
         let inputs = read_input();
@@ -975,7 +982,7 @@ fn codingame() {
             LOCAL_MOVES[(opponent_col % 3 + (opponent_row % 3) * 3) as usize],
         );
         mcts.move_down(opp_move);
-        mcts.expand_tree(begin, turn_duration, &mut rng, 10);
+        mcts.expand_tree(begin, turn_duration, &mut rng);
         let child = mcts.best_child();
         action = child.state.last_action.unwrap();
         mcts.root.replace(child);
